@@ -5,7 +5,7 @@ const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const CASES_FILE = path.join(__dirname, 'cases.json');
+const CASES_FILE = path.join(process.cwd(), 'cases.json');
 
 // Middleware
 app.use(express.json());
