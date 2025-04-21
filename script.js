@@ -1,3 +1,102 @@
+// Define API_URL in the global scope
+const API_URL = 'http://localhost:3001';
+
+// Global CONFIG object for API settings
+let CONFIG = {
+    apiKey: '', // Will be loaded from localStorage if available
+    model: 'gpt-3.5-turbo',
+    temperature: 0.7
+};
+
+// Global DOM elements and variables
+let currentCase = null;
+let currentConversation = [];
+let messages = [];
+let allSessions = []; // Store all sessions to allow filtering
+let currentUserName = localStorage.getItem('userName') || ''; // Store the current user name
+
+// Function to save chat session
+async function saveChatSession(caseId, caseName, messages, userName, casePrompt, diagnosis = '') {
+    try {
+        console.log('Saving chat session:', { caseId, caseName, userName, messages, casePrompt, diagnosis });
+        
+        const session = {
+            caseId,
+            caseName,
+            userName,
+            messages,
+            casePrompt,
+            diagnosis, // Include the user's differential diagnosis
+            timestamp: new Date().toISOString()
+        };
+        
+        // Save to server
+        const response = await fetch(`${API_URL}/save-session`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(session)
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Failed to save session: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        
+        // Also update local backup
+        const backupSessions = JSON.parse(localStorage.getItem('sessions_backup') || '[]');
+        backupSessions.push(result);
+        localStorage.setItem('sessions_backup', JSON.stringify(backupSessions));
+        
+        return result;
+    } catch (error) {
+        console.error('Error saving session:', error);
+        
+        // Create a backup in localStorage
+        const backupSession = {
+            id: Date.now().toString(),
+            caseId,
+            caseName,
+            userName,
+            messages,
+            casePrompt,
+            diagnosis, // Include diagnosis in backup
+            timestamp: new Date().toISOString()
+        };
+        
+        const backupSessions = JSON.parse(localStorage.getItem('sessions_backup') || '[]');
+        backupSessions.push(backupSession);
+        localStorage.setItem('sessions_backup', JSON.stringify(backupSessions));
+        
+        throw error;
+    }
+}
+
+// Check for saved config in localStorage on page load
+(() => {
+    try {
+        const savedConfig = JSON.parse(localStorage.getItem('openai_config') || '{}');
+        if (savedConfig.apiKey) CONFIG.apiKey = savedConfig.apiKey;
+        if (savedConfig.model) CONFIG.model = savedConfig.model;
+        if (savedConfig.temperature !== undefined) CONFIG.temperature = savedConfig.temperature;
+        
+        // Also try to load sessions from localStorage as backup
+        const backupSessions = localStorage.getItem('sessions_backup');
+        if (backupSessions) {
+            try {
+                allSessions = JSON.parse(backupSessions);
+                console.log('Loaded sessions from backup:', allSessions.length);
+            } catch (e) {
+                console.error('Error parsing sessions backup:', e);
+            }
+        }
+    } catch (e) {
+        console.error('Error loading saved config:', e);
+    }
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
     const menuItems = document.querySelectorAll('.menu-item');
     const contentSections = document.querySelectorAll('.content-section');
@@ -10,9 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatTitle = document.getElementById('chatTitle');
     let sortOrder = 'newest';
     let cases = [];
-    let currentCase = null;
     let isTyping = false;
-    let currentConversation = [];
     let speechSynth = window.speechSynthesis;
     let ttsSupported = false;
     let voices = [];
@@ -20,28 +117,78 @@ document.addEventListener('DOMContentLoaded', () => {
     let voiceSettings = {
         rate: 1.0,
         pitch: 1.0,
-        volume: 1.0
+        volume: 1.0,
+        voice: null
     };
     
     // API URL - change if your server runs on a different port
-    const API_URL = 'http://localhost:3001';
+    // const API_URL = 'http://localhost:3001';
 
-    // Configuration for OpenAI API
-    const CONFIG = {
-        apiKey: '', // Will be loaded from localStorage if available
-        model: 'gpt-3.5-turbo',
-        temperature: 0.7
-    };
+    // Speech recognition setup
+    let recognition = null;
+    let isListening = false;
 
-    // Check if CONFIG exists, if not create it with default values
-    if (typeof window.CONFIG === 'undefined') {
-        window.CONFIG = {
-            apiKey: '', // Will be loaded from localStorage if available
-            model: 'gpt-3.5-turbo',
-            temperature: 0.7
-        };
-        console.log('Created default CONFIG object');
+    // Initialize speech recognition
+    function initSpeechRecognition() {
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                const userInput = document.getElementById('userInput');
+                if (userInput) {
+                    userInput.value = transcript;
+                    // Auto-resize the textarea
+                    userInput.style.height = 'auto';
+                    userInput.style.height = (userInput.scrollHeight) + 'px';
+                }
+            };
+
+            recognition.onerror = function(event) {
+                console.error('Speech recognition error:', event.error);
+                const micButton = document.getElementById('micButton');
+                if (micButton) {
+                    micButton.classList.remove('recording');
+                }
+            };
+
+            recognition.onend = function() {
+                isListening = false;
+                const micButton = document.getElementById('micButton');
+                if (micButton) {
+                    micButton.classList.remove('recording');
+                }
+            };
+        } else {
+            console.warn('Speech recognition not supported in this browser');
+        }
     }
+
+    // Toggle speech recognition
+    window.toggleSpeechRecognition = function() {
+        if (!recognition) {
+            initSpeechRecognition();
+        }
+
+        if (isListening) {
+            recognition.stop();
+            isListening = false;
+        } else {
+            try {
+                recognition.start();
+                isListening = true;
+                const micButton = document.getElementById('micButton');
+                if (micButton) {
+                    micButton.classList.add('recording');
+                }
+            } catch (error) {
+                console.error('Error starting speech recognition:', error);
+            }
+        }
+    };
 
     // Function to check if all UI components exist
     function checkUIComponents() {
@@ -70,10 +217,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Hide all sections first
                 document.querySelectorAll('.content-section').forEach(section => {
                     section.style.display = 'none';
+                    section.classList.add('hidden');
+                    section.classList.remove('animate-fade-in');
                 });
                 
                 // Show the active section
                 contentSection.style.display = 'block';
+                contentSection.classList.remove('hidden');
+                contentSection.classList.add('animate-fade-in');
                 
                 console.log(`Initial section: ${contentId}`);
             }
@@ -84,11 +235,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const typingIndicator = document.createElement('div');
     typingIndicator.className = 'typing-indicator';
     typingIndicator.innerHTML = '<span></span><span></span><span></span>';
-    chatMessages.appendChild(typingIndicator);
-
+    // Do not append to chatMessages here - we'll add it only when needed
+    
     // Function to show/hide typing indicator
     function setTypingIndicator(show) {
-        typingIndicator.style.display = show ? 'block' : 'none';
+        if (show) {
+            // Add the typing indicator at the bottom of the chat
+            chatMessages.appendChild(typingIndicator);
+            typingIndicator.style.display = 'block';
+            // Scroll to the bottom to ensure the indicator is visible
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        } else {
+            typingIndicator.style.display = 'none';
+            // Remove from DOM when not in use
+            if (typingIndicator.parentNode) {
+                typingIndicator.parentNode.removeChild(typingIndicator);
+            }
+        }
         isTyping = show;
     }
 
@@ -663,6 +826,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Function to open chat
     function openChat(caseName, casePrompt) {
+        // Prompt for user name if not already set
+        if (!currentUserName) {
+            currentUserName = prompt("Please enter your name:", "");
+            if (currentUserName) {
+                // Save user name to localStorage for future sessions
+                localStorage.setItem('userName', currentUserName);
+            } else {
+                currentUserName = 'Anonymous'; // Default if user cancels
+            }
+        }
+        
         currentCase = { name: caseName, prompt: casePrompt };
         chatPopup.style.display = 'flex'; // Show the chat popup
         chatPopup.classList.add('active');
@@ -670,8 +844,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Clear previous chat messages
         chatMessages.innerHTML = '';
-        // Add typing indicator back
-        chatMessages.appendChild(typingIndicator);
+        // Do not add typing indicator here - we'll add it when needed
         
         // Reset conversation history and add a system message
         currentConversation = [
@@ -682,24 +855,33 @@ document.addEventListener('DOMContentLoaded', () => {
         ];
         
         // Send the prompt directly to the API
-        setTypingIndicator(true);
+        setTypingIndicator(true); // This will add the indicator at the bottom
         
         // Add initial prompt message to UI but keep it hidden as requested
         const userMessageDiv = document.createElement('div');
         userMessageDiv.className = 'message user-message initial-prompt';
-        userMessageDiv.textContent = "Please help with this case: " + casePrompt;
+        
+        const messageContent = document.createElement('div');
+        messageContent.className = 'message-content';
+        messageContent.textContent = "Please help with this case: " + casePrompt;
+        userMessageDiv.appendChild(messageContent);
+        
         userMessageDiv.style.display = 'none'; // Hide the initial prompt
         chatMessages.appendChild(userMessageDiv);
         
         // Call the API directly with the prompt
         callChatGPT(casePrompt).then(response => {
-            setTypingIndicator(false);
+            setTypingIndicator(false); // This will remove the indicator
             
             // Add assistant response to UI
             const assistantMessageDiv = document.createElement('div');
             assistantMessageDiv.className = 'message assistant-message';
-            assistantMessageDiv.textContent = response;
-            assistantMessageDiv.style.display = 'block'; // Ensure response is visible
+            
+            const messageContent = document.createElement('div');
+            messageContent.className = 'message-content';
+            messageContent.textContent = response;
+            assistantMessageDiv.appendChild(messageContent);
+            
             chatMessages.appendChild(assistantMessageDiv);
             chatMessages.scrollTop = chatMessages.scrollHeight;
             
@@ -711,22 +893,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 speakText(response);
             }
         }).catch(error => {
-            setTypingIndicator(false);
+            setTypingIndicator(false); // This will remove the indicator
             
             // Add error message to UI
             const errorMessageDiv = document.createElement('div');
-            errorMessageDiv.className = 'message assistant-message';
-            errorMessageDiv.textContent = "Sorry, I encountered an error. Please try again.";
-            errorMessageDiv.style.display = 'block'; // Ensure error is visible
+            errorMessageDiv.className = 'message error-message';
+            
+            const messageContent = document.createElement('div');
+            messageContent.className = 'message-content';
+            messageContent.textContent = "Error: " + error.message;
+            errorMessageDiv.appendChild(messageContent);
+            
             chatMessages.appendChild(errorMessageDiv);
-            
-            // Still add the response to conversation history
-            currentConversation.push({ role: "assistant", content: "Sorry, I encountered an error. Please try again." });
-            
-            // Speak the error message
-            if (ttsSupported) {
-                speakText("Sorry, I encountered an error. Please try again.");
-            }
+            chatMessages.scrollTop = chatMessages.scrollHeight;
         });
     }
 
@@ -737,14 +916,166 @@ document.addEventListener('DOMContentLoaded', () => {
             window.speechSynthesis.cancel();
         }
         
-        chatPopup.classList.remove('active');
-        setTimeout(() => {
-            chatPopup.style.display = 'none'; // Hide after animation
-        }, 300);
+        // Show differential diagnosis modal before saving the chat
+        if (currentCase && currentConversation.length > 1) { // Ensure we have a valid case and conversation
+            showDifferentialDiagnosisModal();
+        } else {
+            // If no valid conversation, just close the chat
+            finishClosingChat();
+        }
+    };
+
+    // Function to show the differential diagnosis modal
+    function showDifferentialDiagnosisModal() {
+        // Check if modal already exists
+        let diagnosisModal = document.getElementById('diagnosisModal');
+        
+        if (!diagnosisModal) {
+            // Create the modal
+            diagnosisModal = document.createElement('div');
+            diagnosisModal.id = 'diagnosisModal';
+            diagnosisModal.className = 'modal fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center';
+            
+            // Create modal content
+            const modalContent = `
+                <div class="modal-content bg-white dark:bg-gray-800 rounded-lg shadow-xl w-11/12 max-w-2xl p-6" style="color: black !important;">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold text-blue-900 dark:text-blue-300" style="color: black !important; font-weight: bold !important;">Add Your Differential Diagnosis</h2>
+                        <button id="closeDiagnosisModal" class="text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+                    <p class="mb-4 text-blue-900 dark:text-white" style="color: black !important; font-weight: 600 !important;">
+                        Based on the conversation, please provide your differential diagnosis for this case.
+                        This will be saved with your session and included in AI reviews.
+                    </p>
+                    <div class="mb-4">
+                        <label for="diagnosisInput" class="block text-sm font-medium text-blue-900 dark:text-white mb-1" style="color: black !important; font-weight: 600 !important;">
+                            Differential Diagnosis
+                        </label>
+                        <textarea id="diagnosisInput" rows="6" 
+                            class="w-full px-3 py-2 text-black border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-blue-900 text-base font-medium"
+                            style="color: black !important; font-weight: 500 !important; font-size: 16px !important;"
+                            placeholder="Enter your differential diagnosis here..."></textarea>
+                    </div>
+                    <div class="flex justify-end space-x-3">
+                        <button id="skipDiagnosis" class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400">
+                            Skip
+                        </button>
+                        <button id="submitDiagnosis" class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            Submit & Close Chat
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            diagnosisModal.innerHTML = modalContent;
+            document.body.appendChild(diagnosisModal);
+            
+            // Add event listeners
+            document.getElementById('closeDiagnosisModal').addEventListener('click', () => {
+                diagnosisModal.classList.add('hidden');
+            });
+            
+            document.getElementById('skipDiagnosis').addEventListener('click', () => {
+                diagnosisModal.classList.add('hidden');
+                saveChatWithDiagnosis('');
+                finishClosingChat();
+            });
+            
+            document.getElementById('submitDiagnosis').addEventListener('click', () => {
+                const diagnosisText = document.getElementById('diagnosisInput').value.trim();
+                saveChatWithDiagnosis(diagnosisText);
+                diagnosisModal.classList.add('hidden');
+                finishClosingChat();
+            });
+        } else {
+            // Reset the textarea if modal already exists
+            const diagnosisInput = document.getElementById('diagnosisInput');
+            if (diagnosisInput) {
+                diagnosisInput.value = '';
+            }
+            diagnosisModal.classList.remove('hidden');
+        }
+    }
+
+    // Function to save chat with diagnosis
+    function saveChatWithDiagnosis(diagnosisText) {
+        if (currentCase && currentConversation.length > 1) {
+            // Extract the messages from the conversation history
+            // Skip the system message which is at position 0
+            const messages = currentConversation.slice(1);
+            
+            // Create a unique ID for the case if it doesn't have one
+            const caseId = currentCase.id || Date.now().toString();
+            const caseName = currentCase.name;
+            const casePrompt = currentCase.prompt || ''; // Get the case prompt
+            
+            // Call the global saveChatSession function with the userName, casePrompt, and diagnosis
+            saveChatSession(caseId, caseName, messages, currentUserName, casePrompt, diagnosisText)
+                .then(result => {
+                    console.log('Session saved successfully with diagnosis:', result);
+                    
+                    // Show a notification to the user
+                    const notification = document.createElement('div');
+                    notification.className = 'save-notification';
+                    notification.innerHTML = `
+                        <p class="text-blue-900 font-medium">Chat session saved successfully${diagnosisText ? ' with your diagnosis' : ''}!</p>
+                        <button onclick="this.parentNode.remove()" class="dismiss-btn">Dismiss</button>
+                    `;
+                    document.body.appendChild(notification);
+                    
+                    // Auto-remove after 3 seconds
+                    setTimeout(() => {
+                        if (notification.parentNode) {
+                            notification.remove();
+                        }
+                    }, 3000);
+                    
+                    // Update sessions UI if we're on the sessions page
+                    const sessionsSection = document.getElementById('sessions');
+                    if (sessionsSection && window.getComputedStyle(sessionsSection).display !== 'none') {
+                        loadSessions();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error saving session with diagnosis:', error);
+                    
+                    // Show error notification
+                    const notification = document.createElement('div');
+                    notification.className = 'error-notification';
+                    notification.innerHTML = `
+                        <p class="text-red-900 font-medium">Error saving session: ${error.message}</p>
+                        <button onclick="this.parentNode.remove()" class="dismiss-btn">Dismiss</button>
+                    `;
+                    document.body.appendChild(notification);
+                    
+                    // Auto-remove after 5 seconds
+                    setTimeout(() => {
+                        if (notification.parentNode) {
+                            notification.remove();
+                        }
+                    }, 5000);
+                });
+        }
+    }
+
+    // Function to complete the chat closing process
+    function finishClosingChat() {
+        const chatPopup = document.getElementById('chatPopup');
+        if (chatPopup) {
+            chatPopup.classList.remove('active');
+            setTimeout(() => {
+                chatPopup.style.display = 'none'; // Hide after animation
+            }, 300);
+        }
+        
         document.body.style.overflow = 'auto';
         currentCase = null;
         currentConversation = [];
-    };
+    }
 
     // Function to send message - Fix the visibility of messages
     window.sendMessage = async function() {
@@ -753,8 +1084,13 @@ document.addEventListener('DOMContentLoaded', () => {
             // Add user message to UI
             const userMessageDiv = document.createElement('div');
             userMessageDiv.className = 'message user-message';
-            userMessageDiv.textContent = message;
-            userMessageDiv.style.display = 'block'; // Ensure it's visible
+            
+            // Create a message content div
+            const messageContent = document.createElement('div');
+            messageContent.className = 'message-content';
+            messageContent.textContent = message;
+            userMessageDiv.appendChild(messageContent);
+            
             chatMessages.appendChild(userMessageDiv);
             chatMessages.scrollTop = chatMessages.scrollHeight;
             
@@ -763,7 +1099,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             userInput.value = '';
             
+            // Show typing indicator at the bottom
             setTypingIndicator(true);
+            
             try {
                 const response = await callChatGPT(message);
                 setTypingIndicator(false);
@@ -771,8 +1109,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Add assistant response to UI
                 const assistantMessageDiv = document.createElement('div');
                 assistantMessageDiv.className = 'message assistant-message';
-                assistantMessageDiv.textContent = response;
-                assistantMessageDiv.style.display = 'block'; // Ensure it's visible
+                
+                // Create a message content div
+                const messageContent = document.createElement('div');
+                messageContent.className = 'message-content';
+                messageContent.textContent = response;
+                assistantMessageDiv.appendChild(messageContent);
+                
                 chatMessages.appendChild(assistantMessageDiv);
                 chatMessages.scrollTop = chatMessages.scrollHeight;
                 
@@ -789,7 +1132,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Add error message to UI
                 const errorMessageDiv = document.createElement('div');
                 errorMessageDiv.className = 'message assistant-message';
-                errorMessageDiv.textContent = "Sorry, I encountered an error. Please try again.";
+                
+                // Create a message content div
+                const messageContent = document.createElement('div');
+                messageContent.className = 'message-content';
+                messageContent.textContent = "Sorry, I encountered an error. Please try again.";
+                errorMessageDiv.appendChild(messageContent);
+                
                 chatMessages.appendChild(errorMessageDiv);
                 chatMessages.scrollTop = chatMessages.scrollHeight;
                 
@@ -872,26 +1221,21 @@ document.addEventListener('DOMContentLoaded', () => {
             const allSections = document.querySelectorAll('.content-section');
             allSections.forEach(section => {
                 section.style.display = 'none';
-                section.classList.remove('active');
+                section.classList.add('hidden');
+                section.classList.remove('animate-fade-in');
             });
             
             // Show the selected content section
             const contentSection = document.getElementById(contentId);
             if (contentSection) {
                 contentSection.style.display = 'block';
-                contentSection.classList.add('active');
+                contentSection.classList.remove('hidden');
+                contentSection.classList.add('animate-fade-in');
                 
-                // Add a small animation
-                contentSection.style.opacity = '0';
-                setTimeout(() => {
-                    contentSection.style.opacity = '1';
-                }, 10);
-
-                // If management section is selected, refresh the cases list
-                if (contentId === 'management') {
-                    displayCases();
-                } else if (contentId === 'home') {
-                    displayCasesGrid();
+                // Load sessions when the sessions section is shown
+                if (contentId === 'sessions') {
+                    loadSessions();
+                    initSessionSearch();
                 }
                 
                 console.log(`Changed to section: ${contentId}`);
@@ -1357,6 +1701,9 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initEventListeners() {
+    // Update username display when the page loads
+    updateProfileUserNameDisplay();
+    
     // Navigation event listeners for menu items
     const menuItems = document.querySelectorAll('.menu-item');
     const contentSections = document.querySelectorAll('.content-section');
@@ -1376,12 +1723,68 @@ function initEventListeners() {
             // Hide all content sections
             contentSections.forEach(section => {
                 section.style.display = 'none';
+                section.classList.add('hidden');
+                section.classList.remove('animate-fade-in');
             });
             
             // Show the selected content section
-            document.getElementById(contentId).style.display = 'block';
+            const selectedSection = document.getElementById(contentId);
+            if (selectedSection) {
+                selectedSection.style.display = 'block';
+                selectedSection.classList.remove('hidden');
+                selectedSection.classList.add('animate-fade-in');
+                
+                // Load sessions when the sessions section is shown
+                if (contentId === 'sessions') {
+                    loadSessions();
+                    initSessionSearch();
+                }
+            }
         });
     });
+    
+    // User profile button
+    const userProfileButton = document.getElementById('userProfileButton');
+    if (userProfileButton) {
+        userProfileButton.addEventListener('click', toggleProfileDrawer);
+    }
+    
+    // Close profile drawer button
+    const closeProfileDrawerBtn = document.getElementById('closeProfileDrawer');
+    if (closeProfileDrawerBtn) {
+        closeProfileDrawerBtn.addEventListener('click', closeProfileDrawer);
+    }
+    
+    // Click outside to close drawer
+    document.addEventListener('click', function(event) {
+        const drawer = document.getElementById('userProfileDrawer');
+        const profileButton = document.getElementById('userProfileButton');
+        
+        if (drawer && !drawer.classList.contains('translate-x-full')) {
+            // If drawer is open
+            if (!drawer.contains(event.target) && event.target !== profileButton && !profileButton.contains(event.target)) {
+                closeProfileDrawer();
+            }
+        }
+    });
+    
+    // Direct access to sessions link (for backward compatibility)
+    const sessionsLink = document.getElementById('sessions-link');
+    if (sessionsLink) {
+        sessionsLink.addEventListener('click', function() {
+            showSection('sessions');
+            loadSessions();
+            initSessionSearch();
+        });
+    }
+    
+    // Delete all sessions button
+    const deleteAllSessionsBtn = document.getElementById('deleteAllSessionsBtn');
+    if (deleteAllSessionsBtn) {
+        deleteAllSessionsBtn.addEventListener('click', function() {
+            deleteAllSessions();
+        });
+    }
     
     // Voice settings button
     const voiceSettingsBtn = document.getElementById('voiceSettingsButton');
@@ -1430,6 +1833,24 @@ function initEventListeners() {
     if (saveApiConfigBtn) {
         saveApiConfigBtn.addEventListener('click', function() {
             window.saveApiConfig();
+        });
+    }
+    
+    // User name update button
+    const updateUserNameBtn = document.getElementById('updateUserNameBtn');
+    if (updateUserNameBtn) {
+        updateUserNameBtn.addEventListener('click', function() {
+            updateUserName();
+        });
+    }
+    
+    // Also handle Enter keypress in user name input
+    const userNameInput = document.getElementById('userNameInput');
+    if (userNameInput) {
+        userNameInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                updateUserName();
+            }
         });
     }
     
@@ -1676,4 +2097,1131 @@ window.testVoice = function() {
         alert("Could not test voice. Speech synthesis might not be supported in your browser.");
     }
 };
+
+// Sessions management functions
+async function loadSessions() {
+    console.log('Loading sessions...');
+    
+    // Show loading indicator
+    const sessionsGrid = document.getElementById('sessionsGrid');
+    if (sessionsGrid) {
+        sessionsGrid.innerHTML = `
+            <div class="col-span-full flex justify-center items-center py-8">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+            </div>
+        `;
+    }
+    
+    try {
+        // First try to fetch from the server
+        const response = await fetch(`${API_URL}/get-sessions`);
+        
+        if (!response.ok) {
+            throw new Error(`Failed to fetch sessions: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        allSessions = data;
+        console.log(`Loaded ${allSessions.length} sessions from server`);
+        
+        // Update UI with sessions
+        updateSessionsUI(allSessions);
+        
+        // Initialize session search after sessions are loaded
+        initSessionSearch();
+        
+    } catch (error) {
+        console.error('Error loading sessions from server:', error);
+        
+        // Try to load from localStorage backup
+        try {
+            const backupSessions = localStorage.getItem('sessions_backup');
+            if (backupSessions) {
+                allSessions = JSON.parse(backupSessions);
+                console.log(`Loaded ${allSessions.length} sessions from localStorage backup`);
+                
+                updateSessionsUI(allSessions);
+                
+                // Initialize session search after backup sessions are loaded
+                initSessionSearch();
+                
+                // Show info about using backup
+                const notification = document.createElement('div');
+                notification.className = 'fixed bottom-20 right-4 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded shadow-md z-50';
+                notification.innerHTML = `
+                    <div class="flex items-center">
+                        <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                        </svg>
+                        <p>Using cached sessions. Connection to server failed.</p>
+                    </div>
+                `;
+                document.body.appendChild(notification);
+                
+                // Remove notification after 5 seconds
+                setTimeout(() => {
+                    notification.remove();
+                }, 5000);
+            } else {
+                throw new Error('No backup sessions available');
+            }
+        } catch (backupError) {
+            console.error('Error loading backup sessions:', backupError);
+            
+            // Display an empty state with error
+            if (sessionsGrid) {
+                sessionsGrid.innerHTML = `
+                    <div class="col-span-full text-center py-8 bg-white/60 rounded-lg">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto text-gray-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <h3 class="text-lg font-medium text-gray-900 mb-1">No Sessions Found</h3>
+                        <p class="text-gray-500">Start a chat with any case to create a session.</p>
+                        <p class="text-red-500 text-sm mt-2">Error: ${error.message}</p>
+                    </div>
+                `;
+            }
+            
+            // Initialize session search even with empty sessions
+            initSessionSearch();
+        }
+    }
+}
+
+// Function to update the sessions UI
+function updateSessionsUI(sessions) {
+    console.log(`Updating Sessions UI with ${sessions ? sessions.length : 0} sessions`);
+    if (sessions) {
+        // Log the first few sessions to help with debugging
+        sessions.slice(0, 2).forEach((session, index) => {
+            console.log(`Session ${index}: ID=${session.id}, Has review=${!!session.review}, Has diagnosis=${!!session.diagnosis}`);
+        });
+    }
+
+    const sessionsGrid = document.getElementById('sessionsGrid');
+    if (!sessionsGrid) return;
+    
+    // Update the visibility of the delete all button
+    const deleteAllSessionsBtn = document.getElementById('deleteAllSessionsBtn');
+    if (deleteAllSessionsBtn) {
+        deleteAllSessionsBtn.style.display = sessions && sessions.length > 0 ? 'flex' : 'none';
+    }
+    
+    if (!sessions || sessions.length === 0) {
+        sessionsGrid.innerHTML = '<div class="col-span-full text-center p-8"><div class="mb-4"><svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg></div><p class="text-xl font-medium text-gray-600">No sessions found</p><p class="mt-2 text-gray-500">Start a new chat to create sessions</p></div>';
+        return;
+    }
+    
+    let html = '';
+    
+    sessions.forEach(session => {
+        const date = new Date(session.timestamp);
+        const formattedDate = date.toLocaleDateString('en-US', { 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+        });
+        const formattedTime = date.toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+        });
+        
+        let truncatedContent = '';
+        if (session.messages && session.messages.length > 0) {
+            const lastUserMessage = [...session.messages].reverse().find(msg => msg.role === 'user');
+            if (lastUserMessage) {
+                truncatedContent = lastUserMessage.content.substring(0, 120) + (lastUserMessage.content.length > 120 ? '...' : '');
+            }
+        }
+        
+        const userName = session.userName || 'Anonymous';
+        
+        // Define the review button style and content based on whether a review exists
+        const hasReview = session.review ? true : false;
+        const reviewBtnClass = hasReview ? 
+            'bg-green-600 hover:bg-green-700' : 
+            'bg-indigo-600 hover:bg-indigo-700';
+        const reviewBtnText = hasReview ? 'View Review' : 'AI Review';
+        const reviewBtnIcon = hasReview ? 
+            '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />' : 
+            '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />';
+        
+        // Diagnosis badge HTML - only show if session has a diagnosis
+        const diagnosisBadge = session.diagnosis && session.diagnosis.trim() !== '' ? 
+            `<span class="ml-2 text-xs bg-teal-100 text-teal-800 rounded-full px-2 py-1 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                Diagnosis
+            </span>` : '';
+        
+        html += `
+        <div class="session-card glass rounded-xl p-5 shadow-md hover:shadow-lg transition-all" data-session-id="${session.id}">
+            <div class="flex justify-between items-start mb-3">
+                <h3 class="text-lg font-bold text-secondary-700 truncate">${session.caseName || 'Unnamed Case'}</h3>
+                <div class="flex items-center">
+                    <span class="text-xs bg-secondary-100 text-secondary-800 rounded-full px-2 py-1">${session.messages.length} messages</span>
+                    ${diagnosisBadge}
+                </div>
+            </div>
+            <div class="flex items-center mb-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+                <span class="text-sm text-primary-600 font-medium">${userName}</span>
+            </div>
+            <p class="text-sm text-gray-600 mb-3 line-clamp-2">${truncatedContent || 'No content available'}</p>
+            <div class="flex justify-between items-center mt-4">
+                <div class="text-xs text-gray-500">
+                    <span>${formattedDate}</span>
+                    <span class="mx-1">•</span>
+                    <span>${formattedTime}</span>
+                </div>
+                <div class="flex space-x-2">
+                    <button class="view-transcript-btn px-3 py-1.5 bg-secondary-600 hover:bg-secondary-700 text-white text-xs rounded-lg transition-colors flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                        View
+                    </button>
+                    <button class="review-session-btn px-3 py-1.5 ${reviewBtnClass} text-white text-xs rounded-lg transition-colors flex items-center" 
+                            data-session-id="${session.id}" 
+                            ${hasReview ? 'data-has-review="true"' : ''}>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            ${reviewBtnIcon}
+                        </svg>
+                        ${reviewBtnText}
+                    </button>
+                    <button class="delete-session-btn px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-lg transition-colors flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+        `;
+    });
+    
+    sessionsGrid.innerHTML = html;
+    
+    // Add click handlers to view transcript buttons
+    document.querySelectorAll('.view-transcript-btn').forEach(button => {
+        button.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent the card click event
+            const sessionCard = button.closest('.session-card');
+            const sessionId = sessionCard.getAttribute('data-session-id');
+            const session = sessions.find(s => s.id === sessionId);
+            if (session) {
+                viewSessionTranscript(session);
+            }
+        });
+    });
+    
+    // Add click handlers to AI review buttons
+    document.querySelectorAll('.review-session-btn').forEach(button => {
+        button.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent the card click event
+            const sessionCard = button.closest('.session-card');
+            const sessionId = sessionCard.getAttribute('data-session-id');
+            const session = sessions.find(s => s.id === sessionId);
+            if (session) {
+                showAIReview(session);
+            }
+        });
+    });
+    
+    // Add click handlers to delete session buttons
+    document.querySelectorAll('.delete-session-btn').forEach(button => {
+        button.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent the card click event
+            const sessionCard = button.closest('.session-card');
+            const sessionId = sessionCard.getAttribute('data-session-id');
+            const session = sessions.find(s => s.id === sessionId);
+            if (session && confirm(`Are you sure you want to delete this session for "${session.caseName}"?`)) {
+                deleteSession(sessionId);
+            }
+        });
+    });
+    
+    // Add click handlers to session cards
+    document.querySelectorAll('.session-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const sessionId = card.getAttribute('data-session-id');
+            const session = sessions.find(s => s.id === sessionId);
+            if (session) {
+                viewSessionTranscript(session);
+            }
+        });
+    });
+}
+
+// Function to delete a session
+async function deleteSession(sessionId) {
+    try {
+        // Show loading state for the session card
+        const sessionCard = document.querySelector(`.session-card[data-session-id="${sessionId}"]`);
+        if (sessionCard) {
+            sessionCard.classList.add('opacity-50');
+            sessionCard.style.pointerEvents = 'none';
+        }
+        
+        // Send request to delete session
+        const response = await fetch(`${API_URL}/sessions/${sessionId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `Failed to delete session: ${response.status}`);
+        }
+        
+        // Reload sessions after successful deletion
+        await loadSessions();
+        
+        // Show success notification
+        const notification = document.createElement('div');
+        notification.className = 'fixed bottom-20 right-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-md z-50';
+        notification.innerHTML = `
+            <div class="flex items-center">
+                <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                </svg>
+                <p>Session deleted successfully</p>
+            </div>
+        `;
+        document.body.appendChild(notification);
+        
+        // Remove notification after 3 seconds
+        setTimeout(() => {
+            notification.remove();
+        }, 3000);
+        
+    } catch (error) {
+        console.error('Error deleting session:', error);
+        
+        // Show error notification
+        const notification = document.createElement('div');
+        notification.className = 'fixed bottom-20 right-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded shadow-md z-50';
+        notification.innerHTML = `
+            <div class="flex items-center">
+                <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+                <p>Error: ${error.message}</p>
+            </div>
+        `;
+        document.body.appendChild(notification);
+        
+        // Remove notification after 5 seconds
+        setTimeout(() => {
+            notification.remove();
+        }, 5000);
+        
+        // Reset the session card state
+        if (sessionCard) {
+            sessionCard.classList.remove('opacity-50');
+            sessionCard.style.pointerEvents = 'auto';
+        }
+    }
+}
+
+// Function to load a specific session
+function loadSession(session) {
+    viewSessionTranscript(session);
+}
+
+// Function to view a session transcript in read-only mode
+function viewSessionTranscript(session) {
+    // Get the transcript popup elements
+    const transcriptPopup = document.getElementById('transcriptPopup');
+    const transcriptTitle = document.getElementById('transcriptTitle');
+    const transcriptMessages = document.getElementById('transcriptMessages');
+    
+    if (!transcriptPopup || !transcriptTitle || !transcriptMessages) {
+        console.error('Transcript elements not found');
+        return;
+    }
+    
+    // Format date for display
+    const sessionDate = new Date(session.timestamp);
+    const formattedDate = sessionDate.toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+    
+    const userName = session.userName || 'Anonymous';
+    
+    // Set up the transcript popup
+    transcriptPopup.style.display = 'flex';
+    transcriptPopup.classList.add('active');
+    transcriptTitle.textContent = `${session.caseName} - ${formattedDate}`;
+    
+    // Clear previous messages
+    transcriptMessages.innerHTML = '';
+    
+    // Add timestamp header
+    const timestampHeader = document.createElement('div');
+    timestampHeader.className = 'text-center py-3 mb-4 bg-secondary-100 text-secondary-600 rounded-lg text-sm font-medium';
+    timestampHeader.innerHTML = `
+        <div class="flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Session from ${formattedDate}
+        </div>
+        <div class="flex items-center justify-center mt-1">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            Created by <span class="font-semibold text-primary-600">${userName}</span>
+        </div>
+    `;
+    transcriptMessages.appendChild(timestampHeader);
+    
+    // Add all messages from the session
+    session.messages.forEach(message => {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${message.role === 'user' ? 'user-message' : 'assistant-message'}`;
+        
+        const messageContent = document.createElement('div');
+        messageContent.className = 'message-content';
+        messageContent.textContent = message.content;
+        messageDiv.appendChild(messageContent);
+        
+        transcriptMessages.appendChild(messageDiv);
+    });
+    
+    // Scroll to top to show the timestamp header
+    transcriptMessages.scrollTop = 0;
+}
+
+// Function to close the transcript popup
+window.closeTranscript = function() {
+    const transcriptPopup = document.getElementById('transcriptPopup');
+    if (transcriptPopup) {
+        transcriptPopup.classList.remove('active');
+        setTimeout(() => {
+            transcriptPopup.style.display = 'none';
+        }, 300);
+    }
+}
+
+// Initialize search functionality for sessions
+function initSessionSearch() {
+    const searchInput = document.getElementById('sessionSearch');
+    const clearButton = document.getElementById('clearSearchButton');
+    
+    if (searchInput && clearButton) {
+        // Add event listeners for search input
+        searchInput.addEventListener('input', () => {
+            const searchTerm = searchInput.value.toLowerCase().trim();
+            if (searchTerm === '') {
+                updateSessionsUI(allSessions);
+            } else {
+                const filteredSessions = allSessions.filter(session => {
+                    // Search in case name
+                    if (session.caseName && session.caseName.toLowerCase().includes(searchTerm)) {
+                        return true;
+                    }
+                    
+                    // Search in user name
+                    if (session.userName && session.userName.toLowerCase().includes(searchTerm)) {
+                        return true;
+                    }
+                    
+                    // Search in message content
+                    if (session.messages && session.messages.some(msg => 
+                        msg.content.toLowerCase().includes(searchTerm))) {
+                        return true;
+                    }
+                    
+                    // Search in date
+                    const date = new Date(session.timestamp);
+                    const formattedDate = date.toLocaleDateString('en-US', { 
+                        year: 'numeric', 
+                        month: 'short', 
+                        day: 'numeric' 
+                    });
+                    if (formattedDate.toLowerCase().includes(searchTerm)) {
+                        return true;
+                    }
+                    
+                    return false;
+                });
+                
+                updateSessionsUI(filteredSessions);
+            }
+        });
+        
+        // Add clear button functionality
+        clearButton.addEventListener('click', () => {
+            searchInput.value = '';
+            updateSessionsUI(allSessions);
+        });
+    }
+}
+
+// Helper function to show a specific section by ID
+function showSection(sectionId) {
+    const section = document.getElementById(sectionId);
+    const menuItem = document.querySelector(`.menu-item[data-content="${sectionId}"]`);
+    
+    if (!section || !menuItem) {
+        console.error(`Section or menu item for ID ${sectionId} not found`);
+        return;
+    }
+    
+    // Remove active class from all menu items
+    document.querySelectorAll('.menu-item').forEach(item => {
+        item.classList.remove('active');
+    });
+    
+    // Add active class to the target menu item
+    menuItem.classList.add('active');
+    
+    // Hide all sections
+    document.querySelectorAll('.content-section').forEach(s => {
+        s.style.display = 'none';
+        s.classList.add('hidden');
+        s.classList.remove('animate-fade-in');
+    });
+    
+    // Show the target section
+    section.style.display = 'block';
+    section.classList.remove('hidden');
+    section.classList.add('animate-fade-in');
+    
+    console.log(`Switched to section: ${sectionId}`);
+}
+
+// Function to delete all sessions
+async function deleteAllSessions() {
+    try {
+        // Check if there are any sessions to delete
+        if (allSessions.length === 0) {
+            // Show info notification
+            const notification = document.createElement('div');
+            notification.className = 'fixed bottom-20 right-4 bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded shadow-md z-50';
+            notification.innerHTML = `
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <p>No sessions to delete</p>
+                </div>
+            `;
+            document.body.appendChild(notification);
+            
+            // Remove notification after 3 seconds
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+            return;
+        }
+        
+        // Confirm deletion with the user
+        if (!confirm('Are you sure you want to delete ALL session transcripts? This action cannot be undone.')) {
+            return;
+        }
+        
+        // Show loading state
+        const deleteBtn = document.getElementById('deleteAllSessionsBtn');
+        if (deleteBtn) {
+            deleteBtn.disabled = true;
+            deleteBtn.innerHTML = `
+                <svg class="animate-spin h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Deleting...
+            `;
+        }
+        
+        // Send request to delete all sessions
+        const response = await fetch(`${API_URL}/sessions`, {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `Failed to delete all sessions: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // Reload sessions after successful deletion
+        await loadSessions();
+        
+        // Show success notification
+        const notification = document.createElement('div');
+        notification.className = 'fixed bottom-20 right-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-md z-50';
+        notification.innerHTML = `
+            <div class="flex items-center">
+                <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                </svg>
+                <p>${data.message}</p>
+            </div>
+        `;
+        document.body.appendChild(notification);
+        
+        // Remove notification after 3 seconds
+        setTimeout(() => {
+            notification.remove();
+        }, 3000);
+        
+    } catch (error) {
+        console.error('Error deleting all sessions:', error);
+        
+        // Show error notification
+        const notification = document.createElement('div');
+        notification.className = 'fixed bottom-20 right-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded shadow-md z-50';
+        notification.innerHTML = `
+            <div class="flex items-center">
+                <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+                <p>Error: ${error.message}</p>
+            </div>
+        `;
+        document.body.appendChild(notification);
+        
+        // Remove notification after 5 seconds
+        setTimeout(() => {
+            notification.remove();
+        }, 5000);
+    } finally {
+        // Reset the delete button
+        const deleteBtn = document.getElementById('deleteAllSessionsBtn');
+        if (deleteBtn) {
+            deleteBtn.disabled = false;
+            deleteBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Delete All Sessions
+            `;
+        }
+    }
+}
+
+// Function to update the user name display in the profile section
+function updateProfileUserNameDisplay() {
+    const currentUserNameDisplay = document.getElementById('currentUserNameDisplay');
+    const userNameInput = document.getElementById('userNameInput');
+    const userNameDisplay = document.getElementById('userNameDisplay');
+    
+    if (currentUserNameDisplay) {
+        currentUserNameDisplay.textContent = currentUserName || 'Anonymous';
+    }
+    
+    if (userNameDisplay) {
+        userNameDisplay.textContent = currentUserName || 'Anonymous';
+        userNameDisplay.style.display = 'block'; // Make sure it's visible
+    }
+    
+    if (userNameInput) {
+        userNameInput.value = currentUserName || '';
+        userNameInput.placeholder = 'Enter your name';
+    }
+}
+
+// Function to update the user name
+function updateUserName() {
+    const userNameInput = document.getElementById('userNameInput');
+    
+    if (userNameInput) {
+        const newUserName = userNameInput.value.trim();
+        
+        if (newUserName) {
+            currentUserName = newUserName;
+            localStorage.setItem('userName', newUserName);
+            updateProfileUserNameDisplay();
+            
+            // Show success notification
+            const notification = document.createElement('div');
+            notification.className = 'fixed bottom-20 right-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-md z-50';
+            notification.innerHTML = `
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                    <p>Your name has been updated to "${newUserName}"</p>
+                </div>
+            `;
+            document.body.appendChild(notification);
+            
+            // Remove notification after 3 seconds
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+            
+            // Close the drawer after updating the name
+            closeProfileDrawer();
+        } else {
+            // Show error for empty name
+            const notification = document.createElement('div');
+            notification.className = 'fixed bottom-20 right-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded shadow-md z-50';
+            notification.innerHTML = `
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                    <p>Please enter a valid name</p>
+                </div>
+            `;
+            document.body.appendChild(notification);
+            
+            // Remove notification after 3 seconds
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+    }
+}
+
+// Function to toggle the user profile drawer
+function toggleProfileDrawer() {
+    const drawer = document.getElementById('userProfileDrawer');
+    if (drawer) {
+        // Check if the drawer is currently visible
+        const isVisible = !drawer.classList.contains('translate-x-full');
+        
+        if (isVisible) {
+            // Hide the drawer
+            drawer.classList.add('translate-x-full');
+        } else {
+            // Show the drawer and update the user name display
+            drawer.classList.remove('translate-x-full');
+            updateProfileUserNameDisplay();
+        }
+    }
+}
+
+// Function to close the user profile drawer
+function closeProfileDrawer() {
+    const drawer = document.getElementById('userProfileDrawer');
+    if (drawer) {
+        drawer.classList.add('translate-x-full');
+    }
+}
+
+// Function to generate AI review for a session
+async function generateAIReview(session) {
+    try {
+        console.log('Generating AI review for session:', session.id);
+        
+        const reviewBtn = document.querySelector(`.review-session-btn[data-session-id="${session.id}"]`);
+        if (reviewBtn) {
+            reviewBtn.innerHTML = `
+                <svg class="animate-spin h-3 w-3 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Reviewing...
+            `;
+            reviewBtn.disabled = true;
+        }
+        
+        // Check if the session already has a review
+        if (session.review) {
+            console.log('Session already has a review, returning existing review');
+            
+            // Update UI to show review button in normal state
+            if (reviewBtn) {
+                reviewBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                    View Review
+                `;
+                reviewBtn.disabled = false;
+                reviewBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                reviewBtn.classList.add('bg-green-600', 'hover:bg-green-700');
+                reviewBtn.setAttribute('data-has-review', 'true');
+            }
+            
+            return session.review;
+        }
+        
+        // Try to load review.txt
+        let reviewGuidelines = '';
+        try {
+            const reviewResponse = await fetch('review.txt');
+            if (reviewResponse.ok) {
+                reviewGuidelines = await reviewResponse.text();
+                console.log('Loaded review guidelines:', reviewGuidelines.substring(0, 50) + '...');
+            } else {
+                console.warn('Could not load review.txt (status:', reviewResponse.status, ')');
+                reviewGuidelines = 'Please review this conversation and provide constructive feedback.';
+            }
+        } catch (error) {
+            console.warn('Could not load review.txt:', error);
+            reviewGuidelines = 'Please review this conversation and provide constructive feedback.';
+        }
+        
+        // Create a formatted transcript of the conversation
+        const transcriptText = session.messages.map(message => 
+            `${message.role.toUpperCase()}: ${message.content}`
+        ).join('\n\n');
+        
+        // Get the case prompt if available
+        const casePrompt = session.casePrompt || 'No case prompt available';
+        
+        // Get the student's differential diagnosis if available
+        const diagnosis = session.diagnosis ? session.diagnosis.trim() : '';
+        const diagnosisSection = diagnosis ? 
+            `### Student's Differential Diagnosis ###\n\n${diagnosis}\n\n` : 
+            'Student did not provide a differential diagnosis.\n\n';
+        
+        // Prepare the prompt for ChatGPT
+        const prompt = `${reviewGuidelines}\n\n### Case Prompt ###\n\n${casePrompt}\n\n${diagnosisSection}### Conversation Transcript ###\n\n${transcriptText}`;
+        
+        // Check if API key is available
+        if (!CONFIG || !CONFIG.apiKey) {
+            throw new Error('API key not configured. Please set up your API key in the settings.');
+        }
+        
+        console.log('Sending request to ChatGPT API with model:', CONFIG.model || 'gpt-3.5-turbo');
+        
+        // Send to ChatGPT
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${CONFIG.apiKey}`
+            },
+            body: JSON.stringify({
+                model: CONFIG.model || 'gpt-3.5-turbo',
+                messages: [
+                    { role: 'system', content: 'You are an AI assistant providing reviews of conversations.' },
+                    { role: 'user', content: prompt }
+                ],
+                temperature: CONFIG.temperature || 0.7
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            console.error('ChatGPT API error:', errorData);
+            throw new Error(`ChatGPT API error: ${errorData.error?.message || response.statusText}`);
+        }
+        
+        const data = await response.json();
+        const reviewText = data.choices[0].message.content;
+        console.log('Received review from ChatGPT:', reviewText.substring(0, 50) + '...');
+        
+        // Save the review to the session
+        session.review = reviewText;
+        
+        // Save sessions to storage (server)
+        try {
+            console.log('Saving session with review to server');
+            const saveResponse = await fetch(`${API_URL}/save-session`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    ...session,
+                    lastUpdated: new Date().toISOString()
+                })
+            });
+            
+            if (!saveResponse.ok) {
+                const errorData = await saveResponse.json();
+                console.error('Error saving session with review:', errorData);
+                throw new Error(`Failed to save session: ${errorData.error || saveResponse.statusText}`);
+            }
+            
+            const saveResult = await saveResponse.json();
+            console.log('Session saved successfully:', saveResult);
+            
+            // Also update local backup
+            const backupSessions = JSON.parse(localStorage.getItem('sessions_backup') || '[]');
+            const backupIndex = backupSessions.findIndex(s => s.id === session.id);
+            if (backupIndex >= 0) {
+                backupSessions[backupIndex] = session;
+            }
+            localStorage.setItem('sessions_backup', JSON.stringify(backupSessions));
+            
+            // Also update the allSessions array
+            const sessionIndex = allSessions.findIndex(s => s.id === session.id);
+            if (sessionIndex >= 0) {
+                allSessions[sessionIndex] = session;
+            }
+            
+            // Show success notification
+            const notification = document.createElement('div');
+            notification.className = 'fixed bottom-20 right-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-md z-50';
+            notification.innerHTML = `
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                    <p>AI review generated successfully!</p>
+                </div>
+            `;
+            document.body.appendChild(notification);
+            setTimeout(() => notification.remove(), 3000);
+            
+            // Update UI to show review button in normal state
+            if (reviewBtn) {
+                reviewBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                    View Review
+                `;
+                reviewBtn.disabled = false;
+                reviewBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                reviewBtn.classList.add('bg-green-600', 'hover:bg-green-700');
+                reviewBtn.setAttribute('data-has-review', 'true');
+            }
+            
+            // Update the session cards to reflect the change
+            updateSessionsUI(allSessions);
+            
+            return reviewText;
+        } catch (error) {
+            console.error('Error saving review:', error);
+            throw error;
+        }
+    } catch (error) {
+        console.error('Error generating AI review:', error);
+        
+        // Update UI to show error state
+        const reviewBtn = document.querySelector(`.review-session-btn[data-session-id="${session.id}"]`);
+        if (reviewBtn) {
+            reviewBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                Retry
+            `;
+            reviewBtn.disabled = false;
+            reviewBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+            reviewBtn.classList.add('bg-red-600', 'hover:bg-red-700');
+        }
+        
+        // Show error notification
+        const notification = document.createElement('div');
+        notification.className = 'fixed bottom-20 right-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded shadow-md z-50';
+        notification.innerHTML = `
+            <div class="flex items-center">
+                <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                <p>Error generating review: ${error.message}</p>
+            </div>
+        `;
+        document.body.appendChild(notification);
+        setTimeout(() => notification.remove(), 5000);
+        
+        throw error;
+    }
+}
+
+// Function to handle showing AI review - either displaying existing or generating new
+function showAIReview(session) {
+    console.log('showAIReview called for session:', session.id, 'hasReview:', !!session.review);
+    
+    if (session.review) {
+        // If review exists, display it
+        displayReviewModal(session);
+        return;
+    }
+    
+    // If no review exists, generate one
+    const reviewBtn = document.querySelector(`.review-session-btn[data-session-id="${session.id}"]`);
+    if (reviewBtn) {
+        // Update button to show loading state
+        const originalContent = reviewBtn.innerHTML;
+        reviewBtn.innerHTML = `<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Generating...`;
+        reviewBtn.disabled = true;
+        
+        // Generate the review
+        generateAIReview(session)
+            .then(updatedSession => {
+                console.log('Review generated successfully', updatedSession);
+                // Reset button
+                reviewBtn.innerHTML = originalContent;
+                reviewBtn.disabled = false;
+                reviewBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                reviewBtn.classList.add('bg-green-600', 'hover:bg-green-700');
+                reviewBtn.querySelector('svg').innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />';
+                reviewBtn.querySelector('span').textContent = 'View Review';
+                reviewBtn.setAttribute('data-has-review', 'true');
+                
+                // Display the generated review
+                displayReviewModal(updatedSession);
+            })
+            .catch(error => {
+                console.error('Error generating review:', error);
+                // Reset button
+                reviewBtn.innerHTML = originalContent;
+                reviewBtn.disabled = false;
+                
+                // Show error notification
+                showNotification('Failed to generate AI review. Please try again.', 'error');
+            });
+    } else {
+        showNotification('Could not find review button for this session.', 'warning');
+    }
+}
+
+// Function to display the review in a modal
+function displayReviewModal(session) {
+    // Close any existing review modal first
+    const existingModal = document.getElementById('reviewModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    const reviewContent = session.review || 'No review available';
+    const modalHTML = `
+    <div id="reviewModal" class="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true"></div>
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full">
+                <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                    <div class="sm:flex sm:items-start">
+                        <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
+                            <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4" id="modal-title">
+                                Case Review: ${session.caseName || 'Untitled Case'}
+                            </h3>
+                            <div class="flex flex-col space-y-4">
+                                ${session.diagnosis ? `
+                                <div class="border-t border-b border-gray-200 py-4">
+                                    <h4 class="text-md font-medium text-gray-700 mb-2">Student's Differential Diagnosis:</h4>
+                                    <div class="prose max-w-none text-gray-800 whitespace-pre-wrap">${session.diagnosis}</div>
+                                </div>
+                                ` : ''}
+                                <div>
+                                    <h4 class="text-md font-medium text-gray-700 mb-2">AI Review:</h4>
+                                    <div id="formattedReview" class="prose max-w-none text-gray-700"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <button type="button" id="closeReviewBtn" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-primary-600 text-base font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:ml-3 sm:w-auto sm:text-sm">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    `;
+    
+    // Add the modal to the DOM
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    
+    // Format the review using markdown
+    const reviewElement = document.getElementById('formattedReview');
+    if (reviewElement) {
+        // Basic markdown formatting for the review
+        const formattedReview = reviewContent
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // Bold
+            .replace(/\*(.*?)\*/g, '<em>$1</em>') // Italic
+            .replace(/# (.*?)(\n|$)/g, '<h2 class="text-xl font-bold mt-4 mb-2">$1</h2>') // H1
+            .replace(/## (.*?)(\n|$)/g, '<h3 class="text-lg font-semibold mt-3 mb-1">$1</h3>') // H2
+            .replace(/### (.*?)(\n|$)/g, '<h4 class="text-md font-medium mt-2 mb-1">$1</h4>') // H3
+            .replace(/\n\n/g, '<br><br>') // Double line breaks
+            .replace(/\n/g, '<br>'); // Single line breaks
+        
+        reviewElement.innerHTML = formattedReview;
+    }
+    
+    // Add event listeners
+    const closeBtn = document.getElementById('closeReviewBtn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            const modal = document.getElementById('reviewModal');
+            if (modal) modal.remove();
+        });
+    }
+    
+    // Close modal when clicking outside
+    const modal = document.getElementById('reviewModal');
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.remove();
+            }
+        });
+
+        // Close modal on Escape key
+        document.addEventListener('keydown', function closeOnEscape(e) {
+            if (e.key === 'Escape') {
+                modal.remove();
+                document.removeEventListener('keydown', closeOnEscape);
+            }
+        });
+    }
+}
+
+// Add CSS for review modal
+const reviewModalStyle = document.createElement('style');
+reviewModalStyle.textContent = `
+.modal {
+    display: flex;
+    visibility: visible;
+    opacity: 1;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+.modal.hidden {
+    display: none;
+    visibility: hidden;
+    opacity: 0;
+}
+.modal-content {
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-radius: 1rem;
+    max-width: 800px;
+    width: 90%;
+    margin: auto;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+}
+.prose {
+    line-height: 1.7;
+    color: #374151;
+}
+.prose h2 {
+    font-weight: 600;
+    font-size: 1.25rem;
+    margin-top: 1.5rem;
+    margin-bottom: 1rem;
+    color: #1f2937;
+}
+.prose h3 {
+    font-weight: 600;
+    font-size: 1.1rem;
+    margin-top: 1.25rem;
+    margin-bottom: 0.75rem;
+    color: #1f2937;
+}
+.prose p {
+    margin-bottom: 1rem;
+}
+.prose ul {
+    list-style-type: disc;
+    padding-left: 1.5rem;
+    margin-bottom: 1rem;
+}
+.prose li {
+    margin-bottom: 0.25rem;
+}
+`;
+document.head.appendChild(reviewModalStyle);
 

@@ -5,7 +5,8 @@ const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const CASES_FILE = path.join(process.cwd(), 'cases.json');
+const CASES_FILE = path.join(__dirname, 'cases.json');
+const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
 
 // Middleware
 app.use(express.json());
@@ -41,6 +42,91 @@ function writeCases(cases) {
     return true;
   } catch (error) {
     console.error('Error writing cases:', error);
+    return false;
+  }
+}
+
+// Helper function to read sessions
+function readSessions() {
+  try {
+    if (!fs.existsSync(SESSIONS_FILE)) {
+      // Create empty sessions file if it doesn't exist
+      fs.writeFileSync(SESSIONS_FILE, JSON.stringify([]));
+      return [];
+    }
+    const data = fs.readFileSync(SESSIONS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('Error reading sessions:', error);
+    return [];
+  }
+}
+
+// Helper function to write sessions
+function writeSessions(sessions) {
+  try {
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
+    
+    // Also save sessions to sessions.txt in a readable format
+    writeSessionsToTextFile(sessions);
+    
+    return true;
+  } catch (error) {
+    console.error('Error writing sessions:', error);
+    return false;
+  }
+}
+
+// Helper function to write sessions to a text file in a readable format
+function writeSessionsToTextFile(sessions) {
+  try {
+    const SESSIONS_TEXT_FILE = path.join(__dirname, 'sessions.txt');
+    let textContent = '=== SESSIONS LOG ===\n\n';
+    
+    // Sort sessions by timestamp (newest first)
+    const sortedSessions = [...sessions].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    sortedSessions.forEach(session => {
+      const date = new Date(session.timestamp).toLocaleString();
+      
+      textContent += `===== SESSION ID: ${session.id} =====\n`;
+      textContent += `CASE: ${session.caseName}\n`;
+      textContent += `DATE: ${date}\n`;
+      textContent += `USER: ${session.userName || 'Anonymous'}\n`;
+      textContent += `CASE PROMPT: ${session.casePrompt || 'Not available'}\n\n`;
+      
+      // Include differential diagnosis if available
+      if (session.diagnosis && session.diagnosis.trim()) {
+        textContent += `DIFFERENTIAL DIAGNOSIS:\n${session.diagnosis}\n\n`;
+      } else {
+        textContent += `DIFFERENTIAL DIAGNOSIS: Not provided\n\n`;
+      }
+      
+      textContent += `CONVERSATION:\n`;
+      
+      if (session.messages && session.messages.length > 0) {
+        session.messages.forEach(message => {
+          const role = message.role.toUpperCase();
+          textContent += `${role}: ${message.content}\n\n`;
+        });
+      } else {
+        textContent += `No messages available\n\n`;
+      }
+      
+      // Include AI review if available
+      if (session.review) {
+        textContent += `AI REVIEW:\n${session.review}\n\n`;
+      }
+      
+      textContent += `=================================\n\n`;
+    });
+    
+    fs.writeFileSync(SESSIONS_TEXT_FILE, textContent);
+    console.log(`Sessions saved to ${SESSIONS_TEXT_FILE}`);
+    
+    return true;
+  } catch (error) {
+    console.error('Error writing sessions to text file:', error);
     return false;
   }
 }
@@ -166,6 +252,157 @@ app.put('/cases/:name', (req, res) => {
   }
 });
 
+// GET /get-sessions - Get all sessions
+app.get('/get-sessions', (req, res) => {
+  try {
+    const sessions = readSessions();
+    // Sort sessions by timestamp (newest first)
+    sessions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    res.json(sessions);
+  } catch (error) {
+    console.error('Error in GET /get-sessions:', error);
+    res.status(500).json({ error: 'Failed to retrieve sessions' });
+  }
+});
+
+// POST /save-session - Save a session
+app.post('/save-session', (req, res) => {
+  try {
+    const { id, caseId, caseName, messages, userName, review, lastUpdated, casePrompt, diagnosis } = req.body;
+    
+    // Get existing sessions
+    const sessions = readSessions();
+    
+    // If an ID is provided, try to update an existing session
+    if (id) {
+      const sessionIndex = sessions.findIndex(s => s.id === id);
+      if (sessionIndex >= 0) {
+        // Update the existing session
+        const existingSession = sessions[sessionIndex];
+        const updatedSession = {
+          ...existingSession,
+          caseId: caseId || existingSession.caseId,
+          caseName: caseName || existingSession.caseName,
+          userName: userName || existingSession.userName,
+          messages: messages || existingSession.messages,
+          casePrompt: casePrompt || existingSession.casePrompt,
+          diagnosis: diagnosis !== undefined ? diagnosis : existingSession.diagnosis,
+          lastUpdated: lastUpdated || new Date().toISOString()
+        };
+        
+        // Add review if provided
+        if (review) {
+          updatedSession.review = review;
+        }
+        
+        sessions[sessionIndex] = updatedSession;
+        
+        if (writeSessions(sessions)) {
+          console.log(`Session updated for case: "${updatedSession.caseName}" by user: "${updatedSession.userName}"`);
+          res.json({ success: true, session: updatedSession });
+        } else {
+          res.status(500).json({ error: 'Failed to update session' });
+        }
+        return;
+      }
+    }
+    
+    // Create a new session if no ID was provided or no matching session was found
+    // Validate required fields for new sessions
+    if (!caseId || !caseName || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'Missing required fields or invalid data format' });
+    }
+
+    // Create a new session object with unique ID
+    const newSession = {
+      id: id || Date.now().toString(), // Use provided ID or generate a new one
+      caseId,
+      caseName,
+      userName: userName || 'Anonymous', // Use 'Anonymous' if userName is not provided
+      casePrompt: casePrompt || '',
+      diagnosis: diagnosis || '',
+      timestamp: new Date().toISOString(),
+      messages
+    };
+    
+    // Add review if provided
+    if (review) {
+      newSession.review = review;
+    }
+
+    // Add the new session
+    sessions.push(newSession);
+    
+    // Save sessions to file
+    if (writeSessions(sessions)) {
+      console.log(`Session saved for case: "${caseName}" by user: "${newSession.userName}" (${messages.length} messages)`);
+      if (diagnosis) {
+        console.log(`Differential diagnosis included (${diagnosis.length} chars)`);
+      }
+      res.status(201).json({ success: true, session: newSession });
+    } else {
+      res.status(500).json({ error: 'Failed to save session' });
+    }
+  } catch (error) {
+    console.error('Error in POST /save-session:', error);
+    res.status(500).json({ error: 'Failed to save session: ' + error.message });
+  }
+});
+
+// DELETE /sessions/:id - Delete a session by ID
+app.delete('/sessions/:id', (req, res) => {
+  try {
+    const sessionId = req.params.id;
+    
+    // Get existing sessions
+    const sessions = readSessions();
+    
+    // Find the session with the specified ID
+    const sessionIndex = sessions.findIndex(session => session.id === sessionId);
+    
+    if (sessionIndex === -1) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    
+    // Get the session details for logging
+    const { caseName } = sessions[sessionIndex];
+    
+    // Remove the session from the array
+    sessions.splice(sessionIndex, 1);
+    
+    // Save the updated sessions
+    if (writeSessions(sessions)) {
+      console.log(`Session deleted for case: "${caseName}" (ID: ${sessionId})`);
+      res.json({ success: true, message: 'Session deleted successfully' });
+    } else {
+      res.status(500).json({ error: 'Failed to delete session' });
+    }
+  } catch (error) {
+    console.error('Error in DELETE /sessions/:id:', error);
+    res.status(500).json({ error: 'Failed to delete session: ' + error.message });
+  }
+});
+
+// DELETE /sessions - Delete all sessions
+app.delete('/sessions', (req, res) => {
+  try {
+    // Get existing sessions to count them
+    const sessions = readSessions();
+    const count = sessions.length;
+    
+    // Write an empty array to the sessions file
+    if (writeSessions([])) {
+      console.log(`All sessions deleted (${count} sessions)`);
+      res.json({ success: true, message: `All sessions deleted successfully (${count} sessions)` });
+    } else {
+      res.status(500).json({ error: 'Failed to delete all sessions' });
+    }
+  } catch (error) {
+    console.error('Error in DELETE /sessions:', error);
+    res.status(500).json({ error: 'Failed to delete all sessions: ' + error.message });
+  }
+});
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
@@ -174,4 +411,9 @@ app.listen(PORT, () => {
   console.log(`- POST /cases - Create a new case`);
   console.log(`- DELETE /cases/:name - Delete a case by name`);
   console.log(`- PUT /cases/:name - Update a case by name`);
+  console.log(`- GET /get-sessions - Get all sessions`);
+  console.log(`- POST /save-session - Save a session`);
+  console.log(`- DELETE /sessions/:id - Delete a session by ID`);
+  console.log(`- DELETE /sessions - Delete all sessions`);
+  console.log(`- GET /health - Check server health`);
 }); 
