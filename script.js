@@ -430,20 +430,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Function to call ChatGPT API
     async function callChatGPT(message) {
         try {
-            if (!CONFIG.apiKey) {
-                // If no API key is provided, show a prompt to enter it
-                const apiKey = prompt('Please enter your OpenAI API Key:');
-                if (!apiKey) {
-                    return "Please provide an API key to use the chat functionality.";
-                }
-                CONFIG.apiKey = apiKey;
-                // Save to localStorage
-                localStorage.setItem('openai_config', JSON.stringify({
-                    ...JSON.parse(localStorage.getItem('openai_config') || '{}'),
-                    apiKey
-                }));
-            }
-
             // Create messages array
             const messages = [];
             
@@ -459,16 +445,16 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log("Full messages array:", JSON.stringify(messages));
             console.log("====================");
 
-            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            // Use server-side proxy to avoid exposing API key in the frontend
+            const response = await fetch(`${API_URL}/api/openai`, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${CONFIG.apiKey}`
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    model: CONFIG.model,
+                    model: CONFIG.model || 'gpt-3.5-turbo',
                     messages: messages,
-                    temperature: CONFIG.temperature
+                    temperature: CONFIG.temperature || 0.7
                 })
             });
 
@@ -1275,10 +1261,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load saved configuration
     function loadApiConfig() {
         const savedConfig = JSON.parse(localStorage.getItem('openai_config') || '{}');
-        if (savedConfig.apiKey) {
-            CONFIG.apiKey = savedConfig.apiKey;
-            if (apiKeyInput) apiKeyInput.value = savedConfig.apiKey;
-        }
         if (savedConfig.model) {
             CONFIG.model = savedConfig.model;
             if (modelSelect) modelSelect.value = savedConfig.model;
@@ -1301,26 +1283,22 @@ document.addEventListener('DOMContentLoaded', () => {
     window.saveApiConfig = function() {
         console.log("Saving API config");
         try {
-            const apiKeyInput = document.getElementById('apiKeyInput');
             const modelSelect = document.getElementById('modelSelect');
             const temperatureInput = document.getElementById('temperatureInput');
             
-            if (!apiKeyInput || !modelSelect || !temperatureInput) {
+            if (!modelSelect || !temperatureInput) {
                 throw new Error("API config form elements not found");
             }
             
-            const apiKey = apiKeyInput.value.trim();
             const model = modelSelect.value;
             const temperature = parseFloat(temperatureInput.value);
             
             // Update CONFIG object
-            CONFIG.apiKey = apiKey;
             CONFIG.model = model;
             CONFIG.temperature = temperature;
             
             // Save to localStorage
             localStorage.setItem('openai_config', JSON.stringify({
-                apiKey,
                 model,
                 temperature
             }));
@@ -1338,22 +1316,19 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    // Open API configuration modal - Fix this function
+    // Open API configuration modal
     function openApiKeyModal() {
         console.log("Opening API key modal");
         try {
             // Load existing values if available
-            const apiKey = localStorage.getItem('apiKey') || CONFIG.apiKey || '';
             const model = localStorage.getItem('model') || CONFIG.model || 'gpt-3.5-turbo';
             const temperature = localStorage.getItem('temperature') || CONFIG.temperature || 0.7;
             
             // Set values in the form
-            const apiKeyInput = document.getElementById('apiKeyInput');
             const modelSelect = document.getElementById('modelSelect');
             const temperatureInput = document.getElementById('temperatureInput');
             const temperatureValue = document.getElementById('temperatureValue');
             
-            if (apiKeyInput) apiKeyInput.value = apiKey;
             if (modelSelect) modelSelect.value = model;
             if (temperatureInput) temperatureInput.value = temperature;
             if (temperatureValue) temperatureValue.textContent = temperature;
@@ -2043,26 +2018,22 @@ window.closeApiKeyModal = function() {
 window.saveApiConfig = function() {
     console.log("Saving API config");
     try {
-        const apiKeyInput = document.getElementById('apiKeyInput');
         const modelSelect = document.getElementById('modelSelect');
         const temperatureInput = document.getElementById('temperatureInput');
         
-        if (!apiKeyInput || !modelSelect || !temperatureInput) {
+        if (!modelSelect || !temperatureInput) {
             throw new Error("API config form elements not found");
         }
         
-        const apiKey = apiKeyInput.value.trim();
         const model = modelSelect.value;
         const temperature = parseFloat(temperatureInput.value);
         
         // Update CONFIG object
-        CONFIG.apiKey = apiKey;
         CONFIG.model = model;
         CONFIG.temperature = temperature;
         
         // Save to localStorage
         localStorage.setItem('openai_config', JSON.stringify({
-            apiKey,
             model,
             temperature
         }));
@@ -2886,19 +2857,13 @@ async function generateAIReview(session) {
         // Prepare the prompt for ChatGPT
         const prompt = `${reviewGuidelines}\n\n### Case Prompt ###\n\n${casePrompt}\n\n${diagnosisSection}### Conversation Transcript ###\n\n${transcriptText}`;
         
-        // Check if API key is available
-        if (!CONFIG || !CONFIG.apiKey) {
-            throw new Error('API key not configured. Please set up your API key in the settings.');
-        }
-        
         console.log('Sending request to ChatGPT API with model:', CONFIG.model || 'gpt-3.5-turbo');
         
-        // Send to ChatGPT
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        // Send to ChatGPT using server-side proxy
+        const response = await fetch(`${API_URL}/api/openai`, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${CONFIG.apiKey}`
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 model: CONFIG.model || 'gpt-3.5-turbo',

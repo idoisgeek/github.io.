@@ -1,12 +1,21 @@
+// Load environment variables from .env file
+require('dotenv').config();
+
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
+const axios = require('axios'); // For making API calls
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const CASES_FILE = path.join(__dirname, 'cases.json');
 const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
+
+// Check if API key is configured
+if (!process.env.OPENAI_API_KEY) {
+  console.warn('Warning: OPENAI_API_KEY is not set in environment variables');
+}
 
 // Middleware
 app.use(express.json());
@@ -403,6 +412,48 @@ app.delete('/sessions', (req, res) => {
   }
 });
 
+// Proxy endpoint for OpenAI API calls
+app.post('/api/openai', async (req, res) => {
+  try {
+    // Check if API key is configured
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: 'API key not configured on server' });
+    }
+
+    const { model, messages, temperature } = req.body;
+    
+    // Validate request body
+    if (!model || !messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: 'Invalid request. Required fields: model, messages (array)' });
+    }
+    
+    // Forward request to OpenAI API
+    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+      model,
+      messages,
+      temperature: temperature || 0.7
+    }, {
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    // Return the OpenAI API response to the client
+    res.json(response.data);
+    
+  } catch (error) {
+    console.error('Error calling OpenAI API:', error.response?.data || error.message);
+    
+    // Pass through OpenAI's error response if available
+    if (error.response && error.response.data) {
+      return res.status(error.response.status).json(error.response.data);
+    }
+    
+    res.status(500).json({ error: 'Failed to call OpenAI API: ' + error.message });
+  }
+});
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
@@ -416,4 +467,5 @@ app.listen(PORT, () => {
   console.log(`- DELETE /sessions/:id - Delete a session by ID`);
   console.log(`- DELETE /sessions - Delete all sessions`);
   console.log(`- GET /health - Check server health`);
+  console.log(`- POST /api/openai - Proxy for OpenAI API calls`);
 }); 
