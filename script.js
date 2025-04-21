@@ -1,5 +1,8 @@
 // Define API_URL in the global scope
-const API_URL = 'http://localhost:3001';
+const API_URL =
+  window.location.hostname === 'localhost'
+    ? 'http://localhost:3001'
+    : 'https://github-io-nzkl.onrender.com';
 
 // Global CONFIG object for API settings
 let CONFIG = {
