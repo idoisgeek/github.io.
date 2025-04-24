@@ -1,2 +1,107 @@
 [
+  {
+    "id": "1745497946048",
+    "caseId": "1745497946045",
+    "caseName": "Case 1",
+    "userName": "Topaz",
+    "casePrompt": "Patient Profile:\n\nName: Jenifer Aniston\nAge: 30\nGender: Female\nOccupation: Actress\nMarital Status: Married, 2 children\nAddress: Broadway St. Los Angeles\nMedical Background:\n\nNormally healthy, no medications\nHad 3 spontaneous abortions (weeks 8-10)\nDoesn’t smoke, rarely drinks alcohol\nNo illness in her relatives\nCurrent Symptoms:\n\nPrimary Complaint: Pain and swelling in her left leg in the last two days (never had before)\nSymptoms and Status:\n\nNo recent surgery\nNo recent flight\nNo recent physical injury or accident\nNo weight or appetite loss\nNo night sweating\nNo gastrointestinal symptoms\nPlans to get pregnant soon\nNo itching\nNo headaches\nDiagnosis Context:\n\nThe patient has an unprovoked Deep Vein Thrombosis (DVT)\nMain etiologies to consider:\nBorn thrombophilia\nAcquired thrombophilia – Antiphospholipid Antibody Syndrome (APLA)\nNephrotic Syndrome\nMalignancy\n",
+    "diagnosis": "",
+    "timestamp": "2025-04-24T12:32:26.048Z",
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "Sorry, I encountered an error: API request failed with status 500"
+      }
+    ]
+  },
+  {
+    "id": "1745502880749",
+    "caseId": "1745502880745",
+    "caseName": "Case 1",
+    "userName": "admin",
+    "casePrompt": "Patient Profile:\n\nName: Jenifer Aniston\nAge: 30\nGender: Female\nOccupation: Actress\nMarital Status: Married, 2 children\nAddress: Broadway St. Los Angeles\nMedical Background:\n\nNormally healthy, no medications\nHad 3 spontaneous abortions (weeks 8-10)\nDoesn’t smoke, rarely drinks alcohol\nNo illness in her relatives\nCurrent Symptoms:\n\nPrimary Complaint: Pain and swelling in her left leg in the last two days (never had before)\nSymptoms and Status:\n\nNo recent surgery\nNo recent flight\nNo recent physical injury or accident\nNo weight or appetite loss\nNo night sweating\nNo gastrointestinal symptoms\nPlans to get pregnant soon\nNo itching\nNo headaches\nDiagnosis Context:\n\nThe patient has an unprovoked Deep Vein Thrombosis (DVT)\nMain etiologies to consider:\nBorn thrombophilia\nAcquired thrombophilia – Antiphospholipid Antibody Syndrome (APLA)\nNephrotic Syndrome\nMalignancy",
+    "diagnosis": "",
+    "timestamp": "2025-04-24T13:54:40.749Z",
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "Sorry, I encountered an error: API request failed with status 500"
+      }
+    ]
+  },
+  {
+    "id": "1745502959570",
+    "caseId": "1745502959567",
+    "caseName": "Case 1",
+    "userName": "erel",
+    "casePrompt": "Patient Profile:\n\nName: Jenifer Aniston\nAge: 30\nGender: Female\nOccupation: Actress\nMarital Status: Married, 2 children\nAddress: Broadway St. Los Angeles\nMedical Background:\n\nNormally healthy, no medications\nHad 3 spontaneous abortions (weeks 8-10)\nDoesn’t smoke, rarely drinks alcohol\nNo illness in her relatives\nCurrent Symptoms:\n\nPrimary Complaint: Pain and swelling in her left leg in the last two days (never had before)\nSymptoms and Status:\n\nNo recent surgery\nNo recent flight\nNo recent physical injury or accident\nNo weight or appetite loss\nNo night sweating\nNo gastrointestinal symptoms\nPlans to get pregnant soon\nNo itching\nNo headaches\nDiagnosis Context:\n\nThe patient has an unprovoked Deep Vein Thrombosis (DVT)\nMain etiologies to consider:\nBorn thrombophilia\nAcquired thrombophilia – Antiphospholipid Antibody Syndrome (APLA)\nNephrotic Syndrome\nMalignancy",
+    "diagnosis": "",
+    "timestamp": "2025-04-24T13:55:59.570Z",
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "Sorry, I encountered an error: API request failed with status 500"
+      }
+    ]
+  },
+  {
+    "id": "1745502981908",
+    "caseId": "1745502981905",
+    "caseName": "Case 1",
+    "userName": "erel",
+    "casePrompt": "Patient Profile:\n\nName: Jenifer Aniston\nAge: 30\nGender: Female\nOccupation: Actress\nMarital Status: Married, 2 children\nAddress: Broadway St. Los Angeles\nMedical Background:\n\nNormally healthy, no medications\nHad 3 spontaneous abortions (weeks 8-10)\nDoesn’t smoke, rarely drinks alcohol\nNo illness in her relatives\nCurrent Symptoms:\n\nPrimary Complaint: Pain and swelling in her left leg in the last two days (never had before)\nSymptoms and Status:\n\nNo recent surgery\nNo recent flight\nNo recent physical injury or accident\nNo weight or appetite loss\nNo night sweating\nNo gastrointestinal symptoms\nPlans to get pregnant soon\nNo itching\nNo headaches\nDiagnosis Context:\n\nThe patient has an unprovoked Deep Vein Thrombosis (DVT)\nMain etiologies to consider:\nBorn thrombophilia\nAcquired thrombophilia – Antiphospholipid Antibody Syndrome (APLA)\nNephrotic Syndrome\nMalignancy",
+    "diagnosis": "",
+    "timestamp": "2025-04-24T13:56:21.908Z",
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "Sorry, I encountered an error: API request failed with status 500"
+      }
+    ]
+  },
+  {
+    "id": "1745503027238",
+    "caseId": "1745503027235",
+    "caseName": "Case 1",
+    "userName": "topaz",
+    "casePrompt": "Patient Profile:\n\nName: Jenifer Aniston\nAge: 30\nGender: Female\nOccupation: Actress\nMarital Status: Married, 2 children\nAddress: Broadway St. Los Angeles\nMedical Background:\n\nNormally healthy, no medications\nHad 3 spontaneous abortions (weeks 8-10)\nDoesn’t smoke, rarely drinks alcohol\nNo illness in her relatives\nCurrent Symptoms:\n\nPrimary Complaint: Pain and swelling in her left leg in the last two days (never had before)\nSymptoms and Status:\n\nNo recent surgery\nNo recent flight\nNo recent physical injury or accident\nNo weight or appetite loss\nNo night sweating\nNo gastrointestinal symptoms\nPlans to get pregnant soon\nNo itching\nNo headaches\nDiagnosis Context:\n\nThe patient has an unprovoked Deep Vein Thrombosis (DVT)\nMain etiologies to consider:\nBorn thrombophilia\nAcquired thrombophilia – Antiphospholipid Antibody Syndrome (APLA)\nNephrotic Syndrome\nMalignancy",
+    "diagnosis": "",
+    "timestamp": "2025-04-24T13:57:07.238Z",
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "Sorry, I encountered an error: API request failed with status 500"
+      }
+    ]
+  },
+  {
+    "id": "1745503169197",
+    "caseId": "1745503169193",
+    "caseName": "Case 1",
+    "userName": "Anonymous",
+    "casePrompt": "Patient Profile:\n\nName: Jenifer Aniston\nAge: 30\nGender: Female\nOccupation: Actress\nMarital Status: Married, 2 children\nAddress: Broadway St. Los Angeles\nMedical Background:\n\nNormally healthy, no medications\nHad 3 spontaneous abortions (weeks 8-10)\nDoesn’t smoke, rarely drinks alcohol\nNo illness in her relatives\nCurrent Symptoms:\n\nPrimary Complaint: Pain and swelling in her left leg in the last two days (never had before)\nSymptoms and Status:\n\nNo recent surgery\nNo recent flight\nNo recent physical injury or accident\nNo weight or appetite loss\nNo night sweating\nNo gastrointestinal symptoms\nPlans to get pregnant soon\nNo itching\nNo headaches\nDiagnosis Context:\n\nThe patient has an unprovoked Deep Vein Thrombosis (DVT)\nMain etiologies to consider:\nBorn thrombophilia\nAcquired thrombophilia – Antiphospholipid Antibody Syndrome (APLA)\nNephrotic Syndrome\nMalignancy",
+    "diagnosis": "",
+    "timestamp": "2025-04-24T13:59:29.197Z",
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "Sorry, I encountered an error: API request failed with status 500"
+      }
+    ]
+  },
+  {
+    "id": "1745503247201",
+    "caseId": "1745503247198",
+    "caseName": "Case 1",
+    "userName": "admin",
+    "casePrompt": "Patient Profile:\n\nName: Jenifer Aniston\nAge: 30\nGender: Female\nOccupation: Actress\nMarital Status: Married, 2 children\nAddress: Broadway St. Los Angeles\nMedical Background:\n\nNormally healthy, no medications\nHad 3 spontaneous abortions (weeks 8-10)\nDoesn’t smoke, rarely drinks alcohol\nNo illness in her relatives\nCurrent Symptoms:\n\nPrimary Complaint: Pain and swelling in her left leg in the last two days (never had before)\nSymptoms and Status:\n\nNo recent surgery\nNo recent flight\nNo recent physical injury or accident\nNo weight or appetite loss\nNo night sweating\nNo gastrointestinal symptoms\nPlans to get pregnant soon\nNo itching\nNo headaches\nDiagnosis Context:\n\nThe patient has an unprovoked Deep Vein Thrombosis (DVT)\nMain etiologies to consider:\nBorn thrombophilia\nAcquired thrombophilia – Antiphospholipid Antibody Syndrome (APLA)\nNephrotic Syndrome\nMalignancy",
+    "diagnosis": "",
+    "timestamp": "2025-04-24T14:00:47.201Z",
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "Sorry, I encountered an error: API request failed with status 500"
+      }
+    ]
+  }
 ]

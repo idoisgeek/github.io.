@@ -16,7 +16,7 @@ let currentCase = null;
 let currentConversation = [];
 let messages = [];
 let allSessions = []; // Store all sessions to allow filtering
-let currentUserName = localStorage.getItem('userName') || ''; // Store the current user name
+let currentUserName = ''; // Store the current user name
 
 // Function to save chat session
 async function saveChatSession(caseId, caseName, messages, userName, casePrompt, diagnosis = '') {
@@ -100,6 +100,10 @@ async function saveChatSession(caseId, caseName, messages, userName, casePrompt,
     }
 })();
 
+let ttsSupported = false;
+let speechSynth = window.speechSynthesis;
+let voices = [];
+
 document.addEventListener('DOMContentLoaded', () => {
     const menuItems = document.querySelectorAll('.menu-item');
     const contentSections = document.querySelectorAll('.content-section');
@@ -113,9 +117,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let sortOrder = 'newest';
     let cases = [];
     let isTyping = false;
-    let speechSynth = window.speechSynthesis;
-    let ttsSupported = false;
-    let voices = [];
+    // let ttsSupported = false;
     let selectedVoice = null;
     let voiceSettings = {
         rate: 1.0,
@@ -600,9 +602,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     <p class="timestamp">${new Date(caseItem.timestamp).toLocaleString()}</p>
                     <div class="flex justify-between mt-3">
                         <div class="flex gap-2">
-                            <button class="open-case-btn bg-primary-500 hover:bg-primary-600 text-white px-3 py-1 rounded text-sm transition-colors">
-                                Open
-                            </button>
                             <button class="edit-case-btn bg-secondary-500 hover:bg-secondary-600 text-white px-3 py-1 rounded text-sm transition-colors">
                                 Edit
                             </button>
@@ -612,12 +611,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         </button>
                     </div>
                 `;
-
-                // Add event listeners
-                caseCard.querySelector('.open-case-btn').addEventListener('click', () => {
-                    incrementChatCounter();
-                    openChat(caseItem.name, caseItem.prompt);
-                });
 
                 // Add edit button listener
                 caseCard.querySelector('.edit-case-btn').addEventListener('click', () => {
@@ -761,38 +754,12 @@ document.addEventListener('DOMContentLoaded', () => {
         speechSynthesis.speak(utterance);
     }
 
+    // Expose globally
+    window.speakText = speakText;
+
     function testVoice() {
         const testText = "This is a test of the selected voice and settings. How does it sound?";
         speakText(testText);
-    }
-
-    function openVoiceSettingsModal() {
-        const modal = document.getElementById('voiceSettingsModal');
-        if (!modal) {
-            console.error('Voice settings modal not found');
-            return;
-        }
-        modal.style.display = 'block';
-        console.log('Opened voice settings modal');
-    }
-
-    function closeVoiceSettingsModal() {
-        const modal = document.getElementById('voiceSettingsModal');
-        if (!modal) {
-            console.error('Voice settings modal not found');
-            return;
-        }
-        modal.style.display = 'none';
-        console.log('Closed voice settings modal');
-    }
-
-    function saveVoiceSettings() {
-        const modal = document.getElementById('voiceSettingsModal');
-        if (!modal) {
-            console.error('Voice settings modal not found');
-            return;
-        }
-        // ... existing code ...
     }
 
     function loadVoiceSettings() {
@@ -816,16 +783,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Function to open chat
     function openChat(caseName, casePrompt) {
         // Prompt for user name if not already set
-        if (!currentUserName) {
-            currentUserName = prompt("Please enter your name:", "");
-            if (currentUserName) {
-                // Save user name to localStorage for future sessions
-                localStorage.setItem('userName', currentUserName);
-            } else {
-                currentUserName = 'Anonymous'; // Default if user cancels
-            }
-        }
-        
+        currentUserName = localStorage.getItem('userName');
         currentCase = { name: caseName, prompt: casePrompt };
         chatPopup.style.display = 'flex'; // Show the chat popup
         chatPopup.classList.add('active');
@@ -839,7 +797,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentConversation = [
             { 
                 role: "system", 
-                content: `You are an AI assistant helping with a case. Case details: ${casePrompt}` 
+                content: `You are an AI assistant helping with a case. You are ChatGPT, and your task is to simulate a patient attending the internal medicine department of a hospital. The student will talk to you and ask questions to make a preliminary diagnosis. Your character will answer only the questions asked by the student, providing no extra information. The patient's details are as follows:\n\n ${casePrompt} \n\nInstructions for the Student:\n\nEngage with the patient by asking relevant questions to gather necessary information for a preliminary diagnosis. The patient will respond concisely and only provide information in direct response to your questions.\n\nYour first message always be: \"Hello doctor!\"` 
             }
         ];
         
@@ -905,6 +863,16 @@ document.addEventListener('DOMContentLoaded', () => {
             window.speechSynthesis.cancel();
         }
         
+        finishClosingChat();
+    };
+
+    // Function to close chat
+    window.finishDiagnosis = function() {
+        // Stop any ongoing speech when closing chat
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+        }
+        
         // Show differential diagnosis modal before saving the chat
         if (currentCase && currentConversation.length > 1) { // Ensure we have a valid case and conversation
             showDifferentialDiagnosisModal();
@@ -950,9 +918,6 @@ document.addEventListener('DOMContentLoaded', () => {
                             placeholder="Enter your differential diagnosis here..."></textarea>
                     </div>
                     <div class="flex justify-end space-x-3">
-                        <button id="skipDiagnosis" class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400">
-                            Skip
-                        </button>
                         <button id="submitDiagnosis" class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
                             Submit & Close Chat
                         </button>
@@ -966,12 +931,6 @@ document.addEventListener('DOMContentLoaded', () => {
             // Add event listeners
             document.getElementById('closeDiagnosisModal').addEventListener('click', () => {
                 diagnosisModal.classList.add('hidden');
-            });
-            
-            document.getElementById('skipDiagnosis').addEventListener('click', () => {
-                diagnosisModal.classList.add('hidden');
-                saveChatWithDiagnosis('');
-                finishClosingChat();
             });
             
             document.getElementById('submitDiagnosis').addEventListener('click', () => {
@@ -1242,6 +1201,15 @@ document.addEventListener('DOMContentLoaded', () => {
     configButton.addEventListener('click', openApiKeyModal);
     document.body.appendChild(configButton);
 
+
+    // Add voice button to page
+    const voiceButton = document.createElement('button');
+    voiceButton.className = 'config-button';
+    voiceButton.innerHTML = '⚙️';
+    voiceButton.title = 'Voice Settings';
+    voiceButton.addEventListener('click', openVoiceSettingsModal);
+    document.body.appendChild(voiceButton);
+
     // API Modal Functions
     const apiKeyModal = document.getElementById('apiKeyModal');
     const apiKeyInput = document.getElementById('apiKeyInput');
@@ -1256,6 +1224,15 @@ document.addEventListener('DOMContentLoaded', () => {
         openConfigButton.removeAttribute('onclick');
         // Add event listener directly
         openConfigButton.addEventListener('click', openApiKeyModal);
+    }
+
+    // Find the settings button in the DOM
+    const voiceSettingsButton = document.getElementById('voiceSettingsButton');
+    if (voiceSettingsButton) {
+        // Remove the inline onclick attribute that might not be working
+        voiceSettingsButton.removeAttribute('onclick');
+        // Add event listener directly
+        voiceSettingsButton.addEventListener('click', openVoiceSettingsModal);
     }
 
     // Load saved configuration
@@ -1316,6 +1293,36 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    window.saveVoiceSettings = function() {
+        const modal = document.getElementById('voiceSettingsModal');
+        if (!modal) {
+            console.error('Voice settings modal not found');
+            return;
+        }
+
+        const rateInput = document.getElementById('rateInput');
+        const pitchInput = document.getElementById('pitchInput');
+        const volumeInput = document.getElementById('volumeInput');
+        const voiceSelect = document.getElementById('voiceSelect');
+    
+        // Parse values
+        const rate = parseFloat(rateInput.value);
+        const pitch = parseFloat(pitchInput.value);
+        const volume = parseFloat(volumeInput.value);
+        const voiceName = voiceSelect.value;
+
+        // Update the global settings object
+        voiceSettings.rate = rate;
+        voiceSettings.pitch = pitch;
+        voiceSettings.volume = volume;
+        voiceSettings.voice = voiceName;
+    
+        // Close modal
+        window.closeVoiceSettingsModal();
+    
+        alert("Voice settings saved successfully!");
+    }
+
     // Open API configuration modal
     function openApiKeyModal() {
         console.log("Opening API key modal");
@@ -1345,6 +1352,18 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error("Error opening API key modal:", error);
             alert("Could not open API settings. Please try again.");
         }
+    }
+
+    // Open Voice Settings modal
+    function openVoiceSettingsModal() {
+        const modal = document.getElementById('voiceSettingsModal');
+        if (!modal) {
+            console.error('Voice settings modal not found');
+            return;
+        }
+        modal.style.display = 'flex';
+        modal.classList.remove('hidden'); // Make sure it's not hidden via utility classes
+        console.log('Opened voice settings modal');
     }
 
     // Close API configuration modal
@@ -1944,7 +1963,8 @@ window.openVoiceSettingsModal = function() {
         console.error('Voice settings modal not found');
         return;
     }
-    modal.style.display = 'block';
+    modal.style.display = 'flex';
+    modal.classList.remove('hidden');
     console.log('Opened voice settings modal');
 }
 
@@ -1955,16 +1975,39 @@ window.closeVoiceSettingsModal = function() {
         return;
     }
     modal.style.display = 'none';
+    modal.classList.add('hidden');
     console.log('Closed voice settings modal');
 }
 
 window.saveVoiceSettings = function() {
+    alert("yessssss!");
+
     const modal = document.getElementById('voiceSettingsModal');
     if (!modal) {
         console.error('Voice settings modal not found');
         return;
     }
-    // ... existing code ...
+    const rateInput = document.getElementById('voiceRate');
+    const pitchInput = document.getElementById('voicePitch');
+    const volumeInput = document.getElementById('voiceVolume');
+    const voiceSelect = document.getElementById('voiceSelect');
+
+    // Parse values
+    const rate = parseFloat(rateInput.value);
+    const pitch = parseFloat(pitchInput.value);
+    const volume = parseFloat(volumeInput.value);
+    const voiceName = voiceSelect.value;
+
+    // Update the global settings object
+    voiceSettings.rate = rate;
+    voiceSettings.pitch = pitch;
+    voiceSettings.volume = volume;
+    voiceSettings.voice = voiceName;
+
+    // Close modal
+    window.closeVoiceSettingsModal();
+
+    alert("Voice settings saved successfully!");
 }
 
 window.openApiKeyModal = function() {
@@ -2052,25 +2095,63 @@ window.saveApiConfig = function() {
 };
 
 // Add testVoice to the global window object
-window.testVoice = function() {
+// window.testVoice = function() {
+//     console.log("Testing voice settings");
+//     try {
+//         // Create a sample test sentence
+//         const testText = "This is a test of the selected voice and settings. How does it sound?";
+        
+//         // Use the speakText function to speak the test message
+//         if (ttsSupported){
+//             speakText(testText);
+//         }    
+        
+//     } catch (error) {
+//         console.error("Error testing voice:", error);
+//         alert("Could not test voice. Speech synthesis might not be supported in your browser.");
+//     }
+// };
+
+window.testVoice = function () {
     console.log("Testing voice settings");
+
     try {
-        // Create a sample test sentence
-        const testText = "This is a test of the selected voice and settings. How does it sound?";
-        
-        // Check if speech synthesis is supported
-        if (!window.speechSynthesis) {
-            throw new Error("Speech synthesis is not supported in this browser");
+        if (!ttsSupported) {
+            alert("Text-to-speech is not supported in this browser.");
+            return;
         }
-        
-        // Use the speakText function to speak the test message
-        speakText(testText);
-        
+
+        const testText = "This is a test of the selected voice and settings. How does it sound?";
+
+        const rateInput = document.getElementById('rateInput');
+        const pitchInput = document.getElementById('pitchInput');
+        const volumeInput = document.getElementById('volumeInput');
+        const voiceSelect = document.getElementById('voiceSelect');
+
+        const utterance = new SpeechSynthesisUtterance(testText);
+
+        // Use the selected voice
+        const voiceName = voiceSelect.value;
+        const testVoice = voices.find(v => v.name === voiceName);
+        if (testVoice) {
+            utterance.voice = testVoice;
+        }
+
+        // Apply temporary settings
+        utterance.rate = parseFloat(rateInput.value);
+        utterance.pitch = parseFloat(pitchInput.value);
+        utterance.volume = parseFloat(volumeInput.value);
+
+        // Cancel any current speech and speak
+        speechSynthesis.cancel();
+        speechSynthesis.speak(utterance);
+
     } catch (error) {
         console.error("Error testing voice:", error);
         alert("Could not test voice. Speech synthesis might not be supported in your browser.");
     }
 };
+
 
 // Sessions management functions
 async function loadSessions() {
@@ -3193,3 +3274,90 @@ reviewModalStyle.textContent = `
 `;
 document.head.appendChild(reviewModalStyle);
 
+
+
+/* Login / sign up methodology */
+const loginForm = document.getElementById("loginForm");
+const loginPage = document.getElementById("loginPage");
+const mainContent = document.getElementById("mainContent");
+const pageTitle = document.getElementById("pageTitle");
+const submitButton = document.getElementById("submitButton");
+const toggleLink = document.getElementById("toggleLink");
+
+// Handle login request to the server
+async function handleLogin(e) {
+    e.preventDefault();
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+
+    const response = await fetch(`${API_URL}/api/login`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, password })
+    });
+
+    if (response.ok) {
+        const data = await response.json();
+
+        localStorage.setItem('userName', username);
+
+        // Hide login, show app
+        loginPage.classList.add("hidden");
+        mainContent.classList.remove("hidden");
+        document.getElementById("userNameDisplay").textContent = data.user.username;
+    } else {
+        alert("Invalid username or password");
+    }
+}
+
+// Handle sign-up request to the server
+async function handleSignUp(e) {
+    e.preventDefault();
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+
+    const response = await fetch(`${API_URL}/api/register`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, password })
+    });
+
+    if (response.ok) {
+        alert("Account created successfully! Please log in.");
+        toggleToLoginPage(); // Switch to login page after sign-up
+    } else {
+        const data = await response.json();
+        alert(data.message); // Show error message
+    }
+}
+
+function toggleToSignUpPage() {
+    pageTitle.textContent = "Sign Up";
+    submitButton.textContent = "Sign Up";
+    submitButton.removeEventListener("click", handleLogin);
+    submitButton.addEventListener("click", handleSignUp);
+    toggleLink.textContent = "Already have an account? Log In";
+}
+
+function toggleToLoginPage() {
+    pageTitle.textContent = "Login";
+    submitButton.textContent = "Log In";
+    submitButton.removeEventListener("click", handleSignUp);
+    submitButton.addEventListener("click", handleLogin);
+    toggleLink.textContent = "Don't have an account? Sign Up";
+}
+
+// Switch between login and sign-up
+toggleLink.addEventListener("click", function () {
+    if (pageTitle.textContent === "Login") {
+        toggleToSignUpPage();
+    } else {
+        toggleToLoginPage();
+    }
+});
+
+loginForm.addEventListener("submit", handleLogin); // Default login on first load

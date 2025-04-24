@@ -454,6 +454,66 @@ app.post('/api/openai', async (req, res) => {
   }
 });
 
+
+
+
+// login methodology
+
+// Path to the JSON file where users will be stored
+const usersFilePath = path.join(__dirname, 'users.json');
+
+// Read users from JSON file
+const readUsersFromFile = () => {
+    try {
+        const data = fs.readFileSync(usersFilePath);
+        return JSON.parse(data);
+    } catch (err) {
+        return [];
+    }
+};
+
+// Write users to JSON file
+const writeUsersToFile = (users) => {
+    fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
+};
+
+// API to get all users
+app.get('/api/users', (req, res) => {
+    const users = readUsersFromFile();
+    res.json(users);
+});
+
+// API to register a new user
+app.post('/api/register', (req, res) => {
+    const { username, password } = req.body;
+    const users = readUsersFromFile();
+
+    // Check if user already exists
+    if (users.some(user => user.username === username)) {
+        return res.status(400).json({ message: 'User already exists' });
+    }
+
+    // Add new user
+    users.push({ username, password });
+    writeUsersToFile(users);
+
+    res.status(201).json({ message: 'User registered successfully' });
+});
+
+// API to login
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body;
+    const users = readUsersFromFile();
+
+    const user = users.find(user => user.username === username && user.password === password);
+
+    if (!user) {
+        return res.status(400).json({ message: 'Invalid username or password' });
+    }
+
+    res.json({ message: 'Login successful', user });
+});
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
