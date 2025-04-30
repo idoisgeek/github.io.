@@ -6,11 +6,34 @@ const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
 const axios = require('axios'); // For making API calls
+const multer = require('multer');
+const { Client } = require('ssh2');
+const { exec } = require('child_process');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const CASES_FILE = path.join(__dirname, 'cases.json');
 const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
+//const upload = multer({ dest: 'uploads/' }); // Local tmp directory
+
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    const caseName = req.params.caseName;
+    const spotField = file.fieldname; // e.g., 'spot1', 'spot2'
+    const extension = path.extname(file.originalname) || '.wav'; // default to .wav if missing
+    cb(null, `${caseName}_${spotField}${extension}`);
+  }
+});
+
+const upload = multer({ storage });
+
+
+
+
 
 // Check if API key is configured
 if (!process.env.OPENAI_API_KEY) {
@@ -195,7 +218,7 @@ app.post('/cases', (req, res) => {
 });
 
 // DELETE /cases/:name - Delete a case by name
-app.delete('/cases/:name', (req, res) => {
+app.delete('/cases/:name', async (req, res) => {
   try {
     const caseName = req.params.name;
     const cases = readCases();
@@ -212,6 +235,10 @@ app.delete('/cases/:name', (req, res) => {
     } else {
       res.status(500).json({ error: 'Failed to delete the case' });
     }
+    // delete Case On RPI
+    await deleteCaseOnRPI(caseName);
+    res.json({ message: `Case ${caseName} deleted from RPI` });
+
   } catch (error) {
     console.error('Error in DELETE /cases/:name:', error);
     res.status(500).json({ error: 'Failed to delete case: ' + error.message });
@@ -514,6 +541,238 @@ app.post('/api/login', (req, res) => {
     res.json({ message: 'Login successful', user });
 });
 
+
+
+// ssh to RPI
+function uploadWavFilesToRPI(caseName, files) {
+  const conn = new Client();
+  const rpiDir = `/home/admin/Documents/DocTraining/readingRFPy/sounds/${caseName}`; // adjust path if needed
+
+  conn.on('ready', () => {
+      console.log('SSH Connected');
+
+      conn.exec(`mkdir -p ${rpiDir}`, (err, stream) => {
+          if (err) {
+              console.error('Directory creation failed:', err);
+              conn.end();
+              return;
+          }
+
+          // stream.on('close', () => {
+
+            stream.on('close', (code, signal) => {
+              console.log(`Stream close: code: ${code}, signal: ${signal}`); // Add this
+              if (code !== 0) {
+                console.error(`mkdir command failed with code ${code}, signal ${signal}`);
+                conn.end();
+                return;
+              }
+
+              conn.sftp((err, sftp) => {
+                  if (err) {
+                      console.error('SFTP error:', err);
+                      conn.end();
+                      return;
+                  }
+
+                  const spots = ['spot1', 'spot2', 'spot3', 'spot4'];
+                  let completed = 0;
+
+                  spots.forEach((key, i) => {
+                      const localPath = files[key][0].path;
+                      const remotePath = `${rpiDir}/spot${i + 1}.wav`;
+
+                      sftp.fastPut(localPath, remotePath, (err) => {
+                          if (err) {
+                              console.error(`Upload failed for ${key}:`, err);
+                          } else {
+                              console.log(`${key} uploaded successfully.`);
+                          }
+
+                          completed++;
+                          if (completed === 4) {
+                              conn.end();
+                          }
+                      });
+                  });
+              });
+          }); 
+          stream.on('data', (data) => { // And this
+            console.log(`STDOUT: ${data}`);
+          });
+          stream.stderr.on('data', (data) => { // And this
+            console.error(`STDERR: ${data}`);
+          });     
+      });
+  }).connect({
+      host: 'raspberrypi.local',
+      port: 22,
+      username: 'admin',             // Or other RPI user
+      privateKey: fs.readFileSync('C:\\Users\\topaz\\.ssh\\id_rsa', 'utf-8')   // Or use privateKey: 
+  });
+}
+
+// uploading wav files
+app.post('/upload-case/:caseName', upload.fields([
+  { name: 'spot1', maxCount: 1 },
+  { name: 'spot2', maxCount: 1 },
+  { name: 'spot3', maxCount: 1 },
+  { name: 'spot4', maxCount: 1 }
+]), (req, res) => {
+  const caseName = req.params.caseName;
+
+  if (!caseName) {
+    return res.status(400).json({ error: 'Missing case name in URL' });
+  }
+
+  // Ensure all files are received
+  if (!req.files.spot1 || !req.files.spot2 || !req.files.spot3 || !req.files.spot4) {
+      return res.status(400).json({ error: 'All 4 spot files are required' });
+  }
+
+  // Send to RPI (Upload the files to the Raspberry Pi)
+  uploadWavFilesToRPI(caseName, req.files);
+
+  res.status(200).json({ message: 'WAV files uploaded successfully' });
+});
+
+// Delete a case directory on the RPI
+function deleteCaseOnRPI(caseName) {
+  return new Promise((resolve, reject) => {
+      const conn = new Client();
+      const rpiDir = `/home/admin/Documents/DocTraining/readingRFPy/sounds/${caseName}`;
+
+      conn.on('ready', () => {
+          conn.exec(`rm -rf ${rpiDir}`, (err, stream) => {
+              if (err) {
+                  conn.end();
+                  return reject(`Failed to delete directory: ${err.message}`);
+              }
+
+              stream.on('close', (code, signal) => {
+                  conn.end();
+                  if (code === 0) {
+                      resolve(`Deleted ${rpiDir}`);
+                  } else {
+                      reject(`rm command exited with code ${code}`);
+                  }
+              });
+          });
+      }).on('error', reject).connect({
+          host: 'raspberrypi.local',
+          port: 22,
+          username: 'admin',
+          privateKey: fs.readFileSync('C:\\Users\\topaz\\.ssh\\id_rsa', 'utf-8')
+      });
+  });
+}
+
+
+function editWavFilesOnRPI(caseName, files) {
+  const conn = new Client();
+  const rpiDir = `/home/admin/Documents/DocTraining/readingRFPy/sounds/${caseName}`;
+  const spots = ['spot1', 'spot2', 'spot3', 'spot4'];
+
+  conn.on('ready', () => {
+    console.log('SSH Connected');
+
+    conn.sftp((err, sftp) => {
+      if (err) {
+        console.error('SFTP error:', err);
+        conn.end();
+        return;
+      }
+
+      let completed = 0;
+      const toEdit = spots.filter(key => files[key]);
+
+      if (toEdit.length === 0) {
+        console.log("No files to edit.");
+        conn.end();
+        return;
+      }
+
+      toEdit.forEach((key, i) => {
+        const localPath = files[key][0].path;
+        const remotePath = `${rpiDir}/${key}.wav`;
+
+        if (!fs.existsSync(localPath)) {
+          console.warn(`Local file for ${key} does not exist: ${localPath}`);
+          done();
+          return;
+        }
+
+        sftp.unlink(remotePath, (unlinkErr) => {
+          if (unlinkErr && unlinkErr.code !== 2) {
+            console.warn(`Warning: couldn't delete ${remotePath}:`, unlinkErr.message || unlinkErr);
+            // Proceed anyway
+          }
+
+          // Upload file regardless of unlink success
+          sftp.fastPut(localPath, remotePath, (uploadErr) => {
+            if (uploadErr) {
+              console.error(`Upload failed for ${key}:`, uploadErr.message);
+            } else {
+              console.log(`${key} replaced successfully.`);
+            }
+
+            done();
+          });
+        });
+
+        function done() {
+          completed++;
+          if (completed === toEdit.length) {
+            conn.end();
+          }
+        }
+      });
+    });
+  }).connect({
+    host: 'raspberrypi.local',
+    port: 22,
+    username: 'admin',
+    privateKey: fs.readFileSync('C:\\Users\\topaz\\.ssh\\id_rsa')
+  });
+}
+
+
+
+
+// edit wav files
+app.post('/edit-case/:caseName', upload.fields([
+  { name: 'spot1', maxCount: 1 },
+  { name: 'spot2', maxCount: 1 },
+  { name: 'spot3', maxCount: 1 },
+  { name: 'spot4', maxCount: 1 }
+]), (req, res) => {
+  const caseName = req.params.caseName;
+
+  if (!caseName) {
+      return res.status(400).json({ error: 'Missing case name in URL' });
+  }
+
+  if (!req.files || Object.keys(req.files).length === 0) {
+      return res.status(400).json({ error: 'No files uploaded for editing' });
+  }
+
+  editWavFilesOnRPI(caseName, req.files);
+  res.status(200).json({ message: 'WAV files replaced successfully' });
+});
+
+
+
+// check RPI status
+app.get('/rpi-status', (req, res) => {
+  exec('ping -n 1 raspberrypi.local', (error, stdout, stderr) => {
+      if (error) {
+          res.json({ online: false });
+      } else {
+          res.json({ online: true });
+      }
+  });
+});
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
@@ -529,3 +788,5 @@ app.listen(PORT, () => {
   console.log(`- GET /health - Check server health`);
   console.log(`- POST /api/openai - Proxy for OpenAI API calls`);
 }); 
+
+

@@ -393,6 +393,38 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Function to upload the wav files to the backend
+    async function uploadWavFiles(files, caseName) {
+        const formData = new FormData();
+        formData.append('spot1', files[0]);
+        formData.append('spot2', files[1]);
+        formData.append('spot3', files[2]);
+        formData.append('spot4', files[3]);
+
+        try {
+            const response = await fetch(`${API_URL}/upload-case/${encodeURIComponent(caseName)}`, {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `Failed to upload WAV files: ${response.status}`);
+                } else {
+                    const text = await response.text();
+                    throw new Error(`Failed to upload WAV files: ${response.status} - ${text}`);
+                }
+            }
+
+            alert('WAV files uploaded successfully!');
+        } catch (error) {
+            console.error('Error uploading WAV files:', error);
+            alert(`Failed to upload WAV files: ${error.message}`);
+        }
+    }
+
     // Function to delete a case via API with localStorage backup
     async function deleteCase(caseName) {
         try {
@@ -600,6 +632,18 @@ document.addEventListener('DOMContentLoaded', () => {
                         ${hasMoreLines ? `<button class="expand-btn text-xs text-primary-600 hover:text-primary-800 mt-1">Show more</button>` : ''}
                     </div>
                     <p class="timestamp">${new Date(caseItem.timestamp).toLocaleString()}</p>
+
+                    ${[1, 2, 3, 4].map(i => `
+                        <button 
+                            data-audio="/uploads/${caseItem.name}_spot${i}.wav"
+                            data-label="Spot ${i}"
+                            class="play-spot-btn bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded text-xs transition-colors">
+                            ▶ Spot ${i}
+                        </button>
+                    `).join('')}
+                    
+
+
                     <div class="flex justify-between mt-3">
                         <div class="flex gap-2">
                             <button class="edit-case-btn bg-secondary-500 hover:bg-secondary-600 text-white px-3 py-1 rounded text-sm transition-colors">
@@ -611,6 +655,48 @@ document.addEventListener('DOMContentLoaded', () => {
                         </button>
                     </div>
                 `;
+
+
+
+                // Manage audio playback per card
+                let currentAudio = null;
+                let currentButton = null;
+
+                caseCard.querySelectorAll('.play-spot-btn').forEach(button => {
+                    button.addEventListener('click', () => {
+                        const audioUrl = button.getAttribute('data-audio');
+
+                        // If same button clicked again, toggle pause
+                        if (currentButton === button && currentAudio) {
+                            if (!currentAudio.paused) {
+                                currentAudio.pause();
+                                button.textContent = `▶ ${button.dataset.label}`;
+                            } else {
+                                currentAudio.play();
+                                button.textContent = `⏸ ${button.dataset.label}`;
+                            }
+                            return;
+                        }
+
+                        // Stop previous audio
+                        if (currentAudio) {
+                            currentAudio.pause();
+                            currentButton.textContent = `▶ ${currentButton.textContent.slice(2)}`;
+                        }
+
+                        // Play new audio
+                        currentAudio = new Audio(audioUrl);
+                        currentButton = button;
+                        currentAudio.play();
+                        button.textContent = `⏸ ${button.dataset.label}`;
+
+                        currentAudio.addEventListener('ended', () => {
+                            button.textContent = `▶ ${button.dataset.label}`;
+                            currentAudio = null;
+                            currentButton = null;
+                        });
+                    });
+                });
 
                 // Add edit button listener
                 caseCard.querySelector('.edit-case-btn').addEventListener('click', () => {
@@ -656,6 +742,7 @@ document.addEventListener('DOMContentLoaded', () => {
             casesContainer.appendChild(caseCardsContainer);
         }
     }
+
 
     // Initialize text-to-speech
     function initTTS() {
@@ -1106,32 +1193,35 @@ document.addEventListener('DOMContentLoaded', () => {
         caseForm.addEventListener('submit', function(e) {
             e.preventDefault();
             
-            const caseNameInput = document.getElementById('caseName');
-            const casePromptInput = document.getElementById('casePrompt');
+            const caseName = document.getElementById('caseName').value.trim();
+            const casePrompt = document.getElementById('casePrompt').value.trim();
+            const files = [
+                document.getElementById('spot1').files[0],
+                document.getElementById('spot2').files[0],
+                document.getElementById('spot3').files[0],
+                document.getElementById('spot4').files[0]
+            ];
             
-            if (!caseNameInput || !casePromptInput) {
-                console.error('Case form inputs not found');
-                alert('Form inputs not found. Please check the HTML structure.');
+            if (!caseName || !casePrompt || files.some(f => !f)) {
+                alert('Please fill in all fields and upload all 4 WAV files.');
                 return;
             }
             
-            const caseName = caseNameInput.value.trim();
-            const casePrompt = casePromptInput.value.trim();
-            
-            if (!caseName || !casePrompt) {
-                alert('Please fill in both case name and prompt');
+            // ✅ Check if the case name already exists in the current list
+            const nameTaken = cases.some(c => c.name === caseName);
+            if (nameTaken) {
+                alert(`Case name "${caseName}" is already used. Please choose a different name.`);
                 return;
             }
-            
+
             const newCase = {
-                name: caseName,
+                name: caseName, 
                 prompt: casePrompt,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
             };
             
-            // Add case via API instead of directly to the array
             addCase(newCase);
-            
+            uploadWavFiles(files, caseName);
             // Reset form
             this.reset();
         });
@@ -1408,6 +1498,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Check API connection and update status
     async function checkApiConnection() {
         const statusElement = document.getElementById('apiStatus');
+        const rpiStatus = document.getElementById('rpiStatus');
+
         try {
             const response = await fetch(`${API_URL}/health`, { 
                 method: 'GET',
@@ -1421,17 +1513,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 statusElement.textContent = 'Connected';
                 statusElement.style.color = '#28a745';
                 console.log('API health check:', data);
-                return true;
             } else {
                 statusElement.textContent = 'Error';
                 statusElement.style.color = '#dc3545';
-                return false;
             }
         } catch (error) {
             statusElement.textContent = 'Not Connected';
             statusElement.style.color = '#dc3545';
             console.error('API connection error:', error);
-            return false;
+        }
+
+
+        // RPI status
+        try {
+            const res = await fetch(`${API_URL}/rpi-status`);
+            const data = await res.json();
+            if (data.online) {
+                rpiStatus.textContent = 'Online';
+                rpiStatus.style.color = '#28a745';
+            } else {
+                rpiStatus.textContent = 'Offline';
+                rpiStatus.style.color = '#dc3545';
+            }
+        } catch (e) {
+            rpiStatus.textContent = 'Error';
+            rpiStatus.style.color = '#dc3545';
         }
     }
     
@@ -1542,6 +1648,42 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
+    // Function to upload the wav files to the backend from edit
+    async function editWavFiles(files, caseName) {
+        if (!files[0] && !files[1] && !files[2]  && !files[3]) {
+            return;
+        }
+        const formData = new FormData();
+        if (files[0]) formData.append('spot1', files[0]);
+        if (files[1]) formData.append('spot2', files[1]);
+        if (files[2]) formData.append('spot3', files[2]);
+        if (files[3]) formData.append('spot4', files[3]);
+
+        try {
+            const response = await fetch(`${API_URL}/edit-case/${encodeURIComponent(caseName)}`, {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `Failed to upload WAV files: ${response.status}`);
+                } else {
+                    const text = await response.text();
+                    throw new Error(`Failed to edit WAV files: ${response.status} - ${text}`);
+                }
+            }
+
+            alert('WAV files edited successfully!');
+        } catch (error) {
+            console.error('Error uploading WAV files:', error);
+            alert(`Failed to edit WAV files: ${error.message}`);
+        }
+    }
+
+
     // Create Edit Case Modal
     function createEditCaseModal() {
         // Check if modal already exists
@@ -1570,10 +1712,43 @@ document.addEventListener('DOMContentLoaded', () => {
                                 class="w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors">
                         </div>
                         <div class="form-group">
-                            <label for="editCasePrompt" class="block text-sm font-medium text-secondary-700 mb-1">Prompt:</label>
+                            <label for="editCasePrompt" class="block text-sm font-medium text-secondary-700 mb-1">Case Description:</label>
                             <textarea id="editCasePrompt" rows="6" required
                                 class="w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"></textarea>
                         </div>
+
+                        <!-- WAV Uploads -->
+                        <div class="form-group">
+                            <label class="block text-sm font-medium text-secondary-700 mb-2">
+                            Upload New Soundtracks for Spots 1–4 (WAV only). <br>
+                            Pay attention - by uploading specific spot soundtrack you will replace the old one with the new one and the original soundtrack will be deleted.
+                            </label>
+                        
+                            <div class="flex gap-4 flex-wrap">
+                            <label for="spot1" class="flex flex-col items-start text-sm text-gray-700">
+                                Spot 1:
+                                <input type="file" name="spot1" id="spot1edit" accept=".wav" required class="file-input mt-1">
+                            </label>
+                        
+                            <label for="spot2" class="flex flex-col items-start text-sm text-gray-700">
+                                Spot 2:
+                                <input type="file" name="spot2" id="spot2edit" accept=".wav" required class="file-input mt-1">
+                            </label>
+                        
+                            <label for="spot3" class="flex flex-col items-start text-sm text-gray-700">
+                                Spot 3:
+                                <input type="file" name="spot3" id="spot3edit" accept=".wav" required class="file-input mt-1">
+                            </label>
+                        
+                            <label for="spot4" class="flex flex-col items-start text-sm text-gray-700">
+                                Spot 4:
+                                <input type="file" name="spot4" id="spot4edit" accept=".wav" required class="file-input mt-1">
+                            </label>
+                            </div>
+                        </div>
+
+
+
                     </form>
                 </div>
                 <div class="modal-footer border-t border-gray-200/30 p-6 flex justify-end">
@@ -1657,11 +1832,25 @@ document.addEventListener('DOMContentLoaded', () => {
         const caseName = document.getElementById('editCaseName').value.trim();
         const casePrompt = document.getElementById('editCasePrompt').value.trim();
         
+        const files = [
+            document.getElementById('spot1edit').files[0],
+            document.getElementById('spot2edit').files[0],
+            document.getElementById('spot3edit').files[0],
+            document.getElementById('spot4edit').files[0]
+        ];
+
         if (!caseName || !casePrompt) {
-            alert('Please fill in both case name and prompt');
+            alert('Please fill in both case name and description');
             return;
         }
-        
+
+        // Check if the case new name already exists in the current list
+        const nameTaken = cases.some(c => c.name === caseName);
+        if (originalCaseName != caseName && nameTaken) {
+            alert(`Case name "${caseName}" is already used. Please choose a different name.`);
+            return;
+        }
+
         // Find the original case to preserve timestamp
         const originalCase = cases.find(c => c.name === originalCaseName);
         if (!originalCase) {
@@ -1678,7 +1867,8 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Update case
         editCase(originalCaseName, updatedCase);
-        
+        editWavFiles(files, caseName);
+
         // Close modal
         closeEditCaseModal();
     }
@@ -1859,25 +2049,39 @@ function initEventListeners() {
             
             const caseName = document.getElementById('caseName').value.trim();
             const casePrompt = document.getElementById('casePrompt').value.trim();
+            const files = [
+                document.getElementById('spot1').files[0],
+                document.getElementById('spot2').files[0],
+                document.getElementById('spot3').files[0],
+                document.getElementById('spot4').files[0]
+            ];
             
-            if (!caseName || !casePrompt) {
-                alert('Please fill in both case name and prompt');
+            if (!caseName || !casePrompt || files.some(f => !f)) {
+                alert('Please fill in all fields and upload all 4 WAV files.');
                 return;
             }
             
+            //  Check if the case name already exists in the current list
+            const nameTaken = cases.some(c => c.name === caseName);
+            if (nameTaken) {
+                alert(`Case name "${caseName}" is already used. Please choose a different name.`);
+                return;
+            }
+
             const newCase = {
                 name: caseName, 
                 prompt: casePrompt,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
             };
             
             addCase(newCase);
-            
+            uploadWavFiles(files, caseName);
             // Reset form
             this.reset();
         });
     }
-    
+
+
     // Sort select
     const sortSelect = document.getElementById('sortSelect');
     if (sortSelect) {
@@ -3361,3 +3565,6 @@ toggleLink.addEventListener("click", function () {
 });
 
 loginForm.addEventListener("submit", handleLogin); // Default login on first load
+
+
+

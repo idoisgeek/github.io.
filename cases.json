@@ -1,7 +1,22 @@
 [
   {
-    "name": "Case 1",
+    "name": "case1",
     "prompt": "Patient Profile:\n\nName: Jenifer Aniston\nAge: 30\nGender: Female\nOccupation: Actress\nMarital Status: Married, 2 children\nAddress: Broadway St. Los Angeles\nMedical Background:\n\nNormally healthy, no medications\nHad 3 spontaneous abortions (weeks 8-10)\nDoesn’t smoke, rarely drinks alcohol\nNo illness in her relatives\nCurrent Symptoms:\n\nPrimary Complaint: Pain and swelling in her left leg in the last two days (never had before)\nSymptoms and Status:\n\nNo recent surgery\nNo recent flight\nNo recent physical injury or accident\nNo weight or appetite loss\nNo night sweating\nNo gastrointestinal symptoms\nPlans to get pregnant soon\nNo itching\nNo headaches\nDiagnosis Context:\n\nThe patient has an unprovoked Deep Vein Thrombosis (DVT)\nMain etiologies to consider:\nBorn thrombophilia\nAcquired thrombophilia – Antiphospholipid Antibody Syndrome (APLA)\nNephrotic Syndrome\nMalignancy",
     "timestamp": "2025-04-20T09:27:29.789Z"
+  },
+  {
+    "name": "case4",
+    "prompt": "h",
+    "timestamp": "2025-04-30T17:02:02.811Z"
+  },
+  {
+    "name": "case2",
+    "prompt": "j",
+    "timestamp": "2025-04-30T17:04:08.509Z"
+  },
+  {
+    "name": "case3",
+    "prompt": "f",
+    "timestamp": "2025-04-30T17:04:49.736Z"
   }
 ]
