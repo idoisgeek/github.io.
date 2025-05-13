@@ -867,7 +867,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Function to open chat
+// Function to open chat
     function openChat(caseName, casePrompt) {
         // Prompt for user name if not already set
         currentUserName = localStorage.getItem('userName');
@@ -875,72 +875,60 @@ document.addEventListener('DOMContentLoaded', () => {
         chatPopup.style.display = 'flex'; // Show the chat popup
         chatPopup.classList.add('active');
         chatTitle.textContent = caseName;
-        
+
         // Clear previous chat messages
         chatMessages.innerHTML = '';
         // Do not add typing indicator here - we'll add it when needed
-        
+
+        const initialMessage = "Hello doctor!";
+
         // Reset conversation history and add a system message
         currentConversation = [
-            { 
-                role: "system", 
-                content: `You are an AI assistant helping with a case. You are ChatGPT, and your task is to simulate a patient attending the internal medicine department of a hospital. The student will talk to you and ask questions to make a preliminary diagnosis. Your character will answer only the questions asked by the student, providing no extra information. The patient's details are as follows:\n\n ${casePrompt} \n\nInstructions for the Student:\n\nEngage with the patient by asking relevant questions to gather necessary information for a preliminary diagnosis. The patient will respond concisely and only provide information in direct response to your questions.\n\nYour first message always be: \"Hello doctor!\"` 
-            }
+            {
+                role: "system",
+                content: `You are simulating a realistic patient attending the Internal Medicine department of a hospital. A medical student will conduct a clinical interview to reach a preliminary diagnosis.
+
+                Your behavior:
+
+                Remain completely in character as a real human patient throughout the entire conversation.
+                Respond only to questions the student asks. Do not offer extra or unsolicited information.
+                Never mention or suggest your diagnosis.
+                Answer personal questions (like family, occupation, habits, etc.) naturally, based on your patient profile. Do not say things like "I don't know" or "I'm just a simulation."
+                If something is uncertain for the patient, express it naturally (e.g., “I think so,” “I’m not sure,” “Maybe 5 years ago,” etc.).
+                If a question doesn't apply to you, say so realistically (e.g., “I don't have kids,” “I'm not married,” “I don't drink,” etc.).
+                Feel free to include hesitations, emotions, or discomfort if relevant (e.g., pain, embarrassment, frustration).
+                Be consistent in your answers with the patient profile below.
+
+                Patient Profile:
+                ${casePrompt}
+
+                Instructions for the Student:
+
+                Engage with the patient by asking relevant questions to gather necessary information for a preliminary diagnosis. The patient will respond concisely and only provide information in direct response to your questions.
+
+                Your first message should be: "${initialMessage}"`
+            },
+            { role: "assistant", content: initialMessage } // Add the initial message to the conversation
         ];
-        
-        // Send the prompt directly to the API
-        setTypingIndicator(true); // This will add the indicator at the bottom
-        
-        // Add initial prompt message to UI but keep it hidden as requested
-        const userMessageDiv = document.createElement('div');
-        userMessageDiv.className = 'message user-message initial-prompt';
-        
+
+        // Add initial prompt message to UI
+        const assistantMessageDiv = document.createElement('div');
+        assistantMessageDiv.className = 'message assistant-message';
+
         const messageContent = document.createElement('div');
         messageContent.className = 'message-content';
-        messageContent.textContent = "Please help with this case: " + casePrompt;
-        userMessageDiv.appendChild(messageContent);
-        
-        userMessageDiv.style.display = 'none'; // Hide the initial prompt
-        chatMessages.appendChild(userMessageDiv);
-        
-        // Call the API directly with the prompt
-        callChatGPT(casePrompt).then(response => {
-            setTypingIndicator(false); // This will remove the indicator
-            
-            // Add assistant response to UI
-            const assistantMessageDiv = document.createElement('div');
-            assistantMessageDiv.className = 'message assistant-message';
-            
-            const messageContent = document.createElement('div');
-            messageContent.className = 'message-content';
-            messageContent.textContent = response;
-            assistantMessageDiv.appendChild(messageContent);
-            
-            chatMessages.appendChild(assistantMessageDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-            
-            // Add to conversation history (don't add the prompt again as it's in system message)
-            currentConversation.push({ role: "assistant", content: response });
-            
-            // Speak the response text
-            if (ttsSupported) {
-                speakText(response);
-            }
-        }).catch(error => {
-            setTypingIndicator(false); // This will remove the indicator
-            
-            // Add error message to UI
-            const errorMessageDiv = document.createElement('div');
-            errorMessageDiv.className = 'message error-message';
-            
-            const messageContent = document.createElement('div');
-            messageContent.className = 'message-content';
-            messageContent.textContent = "Error: " + error.message;
-            errorMessageDiv.appendChild(messageContent);
-            
-            chatMessages.appendChild(errorMessageDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        });
+        messageContent.textContent = initialMessage;
+        assistantMessageDiv.appendChild(messageContent);
+
+        chatMessages.appendChild(assistantMessageDiv);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+
+        // Speak the initial message if TTS is supported
+        if (ttsSupported) {
+            speakText(initialMessage);
+        }
+
+        setTypingIndicator(false); // Remove typing indicator after initial setup
     }
 
     // Function to close chat
